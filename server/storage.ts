@@ -1,38 +1,370 @@
-import { type User, type InsertUser } from "@shared/schema";
+import {
+  users,
+  wallets,
+  paymentMethods,
+  walletTransactions,
+  autoTopupRules,
+  apps,
+  appSubscriptions,
+  apiKeys,
+  refreshTokens,
+  type User,
+  type InsertUser,
+  type Wallet,
+  type InsertWallet,
+  type PaymentMethod,
+  type InsertPaymentMethod,
+  type WalletTransaction,
+  type InsertWalletTransaction,
+  type AutoTopupRule,
+  type InsertAutoTopupRule,
+  type App,
+  type InsertApp,
+  type AppSubscription,
+  type InsertAppSubscription,
+  type ApiKey,
+  type InsertApiKey,
+  type RefreshToken,
+} from "@shared/schema";
+import { db } from "./db";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
-
-// modify the interface with any CRUD methods
-// you might need
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: Omit<User, "id" | "createdAt" | "updatedAt">): Promise<User>;
+  updateUser(id: string, data: Partial<User>): Promise<User | undefined>;
+  getAllUsers(): Promise<User[]>;
+
+  getWallet(id: string): Promise<Wallet | undefined>;
+  getWalletByUserId(userId: string): Promise<Wallet | undefined>;
+  createWallet(wallet: Omit<Wallet, "id" | "createdAt" | "updatedAt">): Promise<Wallet>;
+  updateWalletBalance(id: string, amountCents: number): Promise<Wallet | undefined>;
+
+  getPaymentMethod(id: string): Promise<PaymentMethod | undefined>;
+  getPaymentMethodsByUserId(userId: string): Promise<PaymentMethod[]>;
+  createPaymentMethod(method: Omit<PaymentMethod, "id" | "createdAt" | "updatedAt">): Promise<PaymentMethod>;
+  updatePaymentMethod(id: string, data: Partial<PaymentMethod>): Promise<PaymentMethod | undefined>;
+  deletePaymentMethod(id: string): Promise<boolean>;
+  setDefaultPaymentMethod(userId: string, methodId: string): Promise<void>;
+
+  getTransactionsByWalletId(walletId: string, limit?: number): Promise<WalletTransaction[]>;
+  createTransaction(transaction: Omit<WalletTransaction, "id" | "createdAt">): Promise<WalletTransaction>;
+  updateTransactionStatus(id: string, status: "PENDING" | "COMPLETED" | "FAILED"): Promise<void>;
+
+  getAutoTopupRule(id: string): Promise<AutoTopupRule | undefined>;
+  getAutoTopupRuleByUserId(userId: string): Promise<AutoTopupRule | undefined>;
+  createAutoTopupRule(rule: Omit<AutoTopupRule, "id" | "createdAt" | "updatedAt">): Promise<AutoTopupRule>;
+  updateAutoTopupRule(id: string, data: Partial<AutoTopupRule>): Promise<AutoTopupRule | undefined>;
+
+  getApp(id: string): Promise<App | undefined>;
+  getAppBySlug(slug: string): Promise<App | undefined>;
+  getAppByClientId(clientId: string): Promise<App | undefined>;
+  getAllApps(): Promise<App[]>;
+  createApp(app: Omit<App, "id" | "createdAt" | "updatedAt">): Promise<App>;
+  updateApp(id: string, data: Partial<App>): Promise<App | undefined>;
+
+  getAppSubscription(userId: string, appId: string): Promise<AppSubscription | undefined>;
+  getAppSubscriptionsByUserId(userId: string): Promise<(AppSubscription & { app: App })[]>;
+  createAppSubscription(subscription: Omit<AppSubscription, "id" | "subscribedAt">): Promise<AppSubscription>;
+  cancelAppSubscription(userId: string, appId: string): Promise<void>;
+
+  getApiKey(id: string): Promise<ApiKey | undefined>;
+  getApiKeysByUserId(userId: string): Promise<ApiKey[]>;
+  getApiKeyByHash(hash: string): Promise<ApiKey | undefined>;
+  createApiKey(key: Omit<ApiKey, "id" | "createdAt">): Promise<ApiKey>;
+  deleteApiKey(id: string): Promise<boolean>;
+  updateApiKeyLastUsed(id: string): Promise<void>;
+
+  createRefreshToken(userId: string, tokenHash: string, expiresAt: Date): Promise<RefreshToken>;
+  getRefreshTokenByHash(hash: string): Promise<RefreshToken | undefined>;
+  deleteRefreshToken(id: string): Promise<void>;
+  deleteRefreshTokensByUserId(userId: string): Promise<void>;
+
+  getAdminStats(): Promise<{
+    totalUsers: number;
+    totalApps: number;
+    totalBalance: number;
+    totalTransactions: number;
+  }>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-
-  constructor() {
-    this.users = new Map();
-  }
-
+export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user || undefined;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async createUser(user: Omit<User, "id" | "createdAt" | "updatedAt">): Promise<User> {
+    const [created] = await db.insert(users).values(user).returning();
+    return created;
+  }
+
+  async updateUser(id: string, data: Partial<User>): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(users.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async getWallet(id: string): Promise<Wallet | undefined> {
+    const [wallet] = await db.select().from(wallets).where(eq(wallets.id, id));
+    return wallet || undefined;
+  }
+
+  async getWalletByUserId(userId: string): Promise<Wallet | undefined> {
+    const [wallet] = await db.select().from(wallets).where(eq(wallets.userId, userId));
+    return wallet || undefined;
+  }
+
+  async createWallet(wallet: Omit<Wallet, "id" | "createdAt" | "updatedAt">): Promise<Wallet> {
+    const [created] = await db.insert(wallets).values(wallet).returning();
+    return created;
+  }
+
+  async updateWalletBalance(id: string, amountCents: number): Promise<Wallet | undefined> {
+    const [updated] = await db
+      .update(wallets)
+      .set({
+        balanceCents: sql`${wallets.balanceCents} + ${amountCents}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(wallets.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getPaymentMethod(id: string): Promise<PaymentMethod | undefined> {
+    const [method] = await db.select().from(paymentMethods).where(eq(paymentMethods.id, id));
+    return method || undefined;
+  }
+
+  async getPaymentMethodsByUserId(userId: string): Promise<PaymentMethod[]> {
+    return db
+      .select()
+      .from(paymentMethods)
+      .where(eq(paymentMethods.userId, userId))
+      .orderBy(desc(paymentMethods.isDefault), desc(paymentMethods.createdAt));
+  }
+
+  async createPaymentMethod(method: Omit<PaymentMethod, "id" | "createdAt" | "updatedAt">): Promise<PaymentMethod> {
+    const [created] = await db.insert(paymentMethods).values(method).returning();
+    return created;
+  }
+
+  async updatePaymentMethod(id: string, data: Partial<PaymentMethod>): Promise<PaymentMethod | undefined> {
+    const [updated] = await db
+      .update(paymentMethods)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(paymentMethods.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deletePaymentMethod(id: string): Promise<boolean> {
+    const result = await db.delete(paymentMethods).where(eq(paymentMethods.id, id));
+    return true;
+  }
+
+  async setDefaultPaymentMethod(userId: string, methodId: string): Promise<void> {
+    await db
+      .update(paymentMethods)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(eq(paymentMethods.userId, userId));
+
+    await db
+      .update(paymentMethods)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(eq(paymentMethods.id, methodId));
+  }
+
+  async getTransactionsByWalletId(walletId: string, limit = 50): Promise<WalletTransaction[]> {
+    return db
+      .select()
+      .from(walletTransactions)
+      .where(eq(walletTransactions.walletId, walletId))
+      .orderBy(desc(walletTransactions.createdAt))
+      .limit(limit);
+  }
+
+  async createTransaction(transaction: Omit<WalletTransaction, "id" | "createdAt">): Promise<WalletTransaction> {
+    const [created] = await db.insert(walletTransactions).values(transaction).returning();
+    return created;
+  }
+
+  async updateTransactionStatus(id: string, status: "PENDING" | "COMPLETED" | "FAILED"): Promise<void> {
+    await db.update(walletTransactions).set({ status }).where(eq(walletTransactions.id, id));
+  }
+
+  async getAutoTopupRule(id: string): Promise<AutoTopupRule | undefined> {
+    const [rule] = await db.select().from(autoTopupRules).where(eq(autoTopupRules.id, id));
+    return rule || undefined;
+  }
+
+  async getAutoTopupRuleByUserId(userId: string): Promise<AutoTopupRule | undefined> {
+    const [rule] = await db.select().from(autoTopupRules).where(eq(autoTopupRules.userId, userId));
+    return rule || undefined;
+  }
+
+  async createAutoTopupRule(rule: Omit<AutoTopupRule, "id" | "createdAt" | "updatedAt">): Promise<AutoTopupRule> {
+    const [created] = await db.insert(autoTopupRules).values(rule).returning();
+    return created;
+  }
+
+  async updateAutoTopupRule(id: string, data: Partial<AutoTopupRule>): Promise<AutoTopupRule | undefined> {
+    const [updated] = await db
+      .update(autoTopupRules)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(autoTopupRules.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getApp(id: string): Promise<App | undefined> {
+    const [app] = await db.select().from(apps).where(eq(apps.id, id));
+    return app || undefined;
+  }
+
+  async getAppBySlug(slug: string): Promise<App | undefined> {
+    const [app] = await db.select().from(apps).where(eq(apps.slug, slug));
+    return app || undefined;
+  }
+
+  async getAppByClientId(clientId: string): Promise<App | undefined> {
+    const [app] = await db.select().from(apps).where(eq(apps.clientId, clientId));
+    return app || undefined;
+  }
+
+  async getAllApps(): Promise<App[]> {
+    return db.select().from(apps).where(eq(apps.isActive, true)).orderBy(desc(apps.createdAt));
+  }
+
+  async createApp(app: Omit<App, "id" | "createdAt" | "updatedAt">): Promise<App> {
+    const [created] = await db.insert(apps).values(app).returning();
+    return created;
+  }
+
+  async updateApp(id: string, data: Partial<App>): Promise<App | undefined> {
+    const [updated] = await db
+      .update(apps)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(apps.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getAppSubscription(userId: string, appId: string): Promise<AppSubscription | undefined> {
+    const [subscription] = await db
+      .select()
+      .from(appSubscriptions)
+      .where(and(eq(appSubscriptions.userId, userId), eq(appSubscriptions.appId, appId)));
+    return subscription || undefined;
+  }
+
+  async getAppSubscriptionsByUserId(userId: string): Promise<(AppSubscription & { app: App })[]> {
+    const result = await db
+      .select()
+      .from(appSubscriptions)
+      .innerJoin(apps, eq(appSubscriptions.appId, apps.id))
+      .where(eq(appSubscriptions.userId, userId));
+
+    return result.map((row) => ({
+      ...row.app_subscriptions,
+      app: row.apps,
+    }));
+  }
+
+  async createAppSubscription(subscription: Omit<AppSubscription, "id" | "subscribedAt">): Promise<AppSubscription> {
+    const [created] = await db.insert(appSubscriptions).values(subscription).returning();
+    return created;
+  }
+
+  async cancelAppSubscription(userId: string, appId: string): Promise<void> {
+    await db
+      .update(appSubscriptions)
+      .set({ status: "cancelled", cancelledAt: new Date() })
+      .where(and(eq(appSubscriptions.userId, userId), eq(appSubscriptions.appId, appId)));
+  }
+
+  async getApiKey(id: string): Promise<ApiKey | undefined> {
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.id, id));
+    return key || undefined;
+  }
+
+  async getApiKeysByUserId(userId: string): Promise<ApiKey[]> {
+    return db.select().from(apiKeys).where(eq(apiKeys.userId, userId)).orderBy(desc(apiKeys.createdAt));
+  }
+
+  async getApiKeyByHash(hash: string): Promise<ApiKey | undefined> {
+    const [key] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, hash));
+    return key || undefined;
+  }
+
+  async createApiKey(key: Omit<ApiKey, "id" | "createdAt">): Promise<ApiKey> {
+    const [created] = await db.insert(apiKeys).values(key).returning();
+    return created;
+  }
+
+  async deleteApiKey(id: string): Promise<boolean> {
+    await db.delete(apiKeys).where(eq(apiKeys.id, id));
+    return true;
+  }
+
+  async updateApiKeyLastUsed(id: string): Promise<void> {
+    await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, id));
+  }
+
+  async createRefreshToken(userId: string, tokenHash: string, expiresAt: Date): Promise<RefreshToken> {
+    const [created] = await db
+      .insert(refreshTokens)
+      .values({ userId, tokenHash, expiresAt })
+      .returning();
+    return created;
+  }
+
+  async getRefreshTokenByHash(hash: string): Promise<RefreshToken | undefined> {
+    const [token] = await db.select().from(refreshTokens).where(eq(refreshTokens.tokenHash, hash));
+    return token || undefined;
+  }
+
+  async deleteRefreshToken(id: string): Promise<void> {
+    await db.delete(refreshTokens).where(eq(refreshTokens.id, id));
+  }
+
+  async deleteRefreshTokensByUserId(userId: string): Promise<void> {
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  }
+
+  async getAdminStats(): Promise<{
+    totalUsers: number;
+    totalApps: number;
+    totalBalance: number;
+    totalTransactions: number;
+  }> {
+    const [userCount] = await db.select({ count: sql<number>`count(*)` }).from(users);
+    const [appCount] = await db.select({ count: sql<number>`count(*)` }).from(apps);
+    const [balanceSum] = await db.select({ sum: sql<number>`coalesce(sum(balance_cents), 0)` }).from(wallets);
+    const [txCount] = await db.select({ count: sql<number>`count(*)` }).from(walletTransactions);
+
+    return {
+      totalUsers: Number(userCount?.count || 0),
+      totalApps: Number(appCount?.count || 0),
+      totalBalance: Number(balanceSum?.sum || 0),
+      totalTransactions: Number(txCount?.count || 0),
+    };
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
