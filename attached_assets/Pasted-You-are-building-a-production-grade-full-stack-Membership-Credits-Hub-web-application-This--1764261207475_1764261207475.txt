@@ -1,0 +1,101 @@
+You are building a production-grade, full-stack “Membership & Credits Hub” web application.
+
+This app is a STANDALONE MEMBERSHIP + BILLING PLATFORM that all of my other apps will plug into.
+
+Use this tech stack:
+
+- Backend:
+  - Node.js + TypeScript
+  - Express (or Fastify if you prefer) for HTTP API
+  - Prisma ORM with PostgreSQL
+  - JSON Web Tokens (JWT) for auth (access + refresh tokens)
+  - bcrypt for password hashing
+  - Zod or a similar library for request validation
+
+- Database:
+  - PostgreSQL (assume a DATABASE_URL environment variable)
+  - Use Prisma migrations
+
+- Frontend:
+  - React + Vite
+  - TypeScript
+  - Simple, clean, responsive UI with a top navigation bar:
+    - “Dashboard”, “Wallet & Credits”, “My Apps”, “Billing Methods”, “Settings (2FA, profile, API keys)”, “Admin” (visible only to admin users)
+
+- General requirements:
+  - Treat this as the “financial membership center” for all future apps I build.
+  - The core job: manage users, authentication, 2FA, wallets/credits, funding sources, auto-topups, and app subscriptions.
+  - Other apps will NOT own their own users; they will rely on this hub for:
+    - Single Sign-On (SSO)
+    - Credits balance checks
+    - Billing / debits
+
+==================================================
+DATA MODEL (Prisma schema)
+==================================================
+
+Create a Prisma schema with at least these tables (adjust field types as needed, but keep the concepts):
+
+1) User
+   - id (string, uuid)
+   - email (string, unique)
+   - phone (string, nullable, unique when present)
+   - passwordHash (string)
+   - fullName (string, nullable)
+   - isAdmin (boolean, default false)
+   - twoFactorEnabled (boolean, default false)
+   - twoFactorSecret (string, nullable – for TOTP)
+   - createdAt (DateTime)
+   - updatedAt (DateTime)
+
+2) Wallet
+   - id (string, uuid)
+   - userId (fk -> User)
+   - currency (string, default "USD")
+   - balanceCents (bigint/int, default 0)  // store money in cents for precision
+   - createdAt (DateTime)
+   - updatedAt (DateTime)
+
+3) PaymentMethod
+   - id (string, uuid)
+   - userId (fk -> User)
+   - type (enum: "CARD", "BANK_ACH", "PAYPAL", "VENMO", "ZELLE", "CRYPTO")
+   - provider (string) // e.g., "stripe", "plaid", "paypal", "coinbase", etc.
+   - externalId (string) // token or reference from the provider
+   - last4 (string, nullable)
+   - brand (string, nullable)
+   - isDefault (boolean, default false)
+   - createdAt (DateTime)
+   - updatedAt (DateTime)
+
+4) WalletTransaction
+   - id (string, uuid)
+   - walletId (fk -> Wallet)
+   - type (enum: "CREDIT", "DEBIT")
+   - source (string) // e.g. "USER_DEPOSIT", "AUTO_TOPUP", "APP_USAGE"
+   - appId (fk -> App, nullable) // which app caused the debit/credit
+   - amountCents (bigint/int)
+   - description (string)
+   - status (enum: "PENDING", "COMPLETED", "FAILED")
+   - createdAt (DateTime)
+
+5) AutoTopupRule
+   - id (string, uuid)
+   - userId (fk -> User)
+   - walletId (fk -> Wallet)
+   - paymentMethodId (fk -> PaymentMethod)
+   - thresholdCents (bigint/int) // when balance <= threshold, trigger topup
+   - topupAmountCents (bigint/int) // how much to add
+   - active (boolean)
+   - createdAt (DateTime)
+   - updatedAt (DateTime)
+
+6) App
+   - id (string, uuid)
+   - name (string)
+   - slug (string, unique) // e.g. "ai-copywriter", "image-generator"
+   - description (string)
+   - callbackUrl (string) // where we redirect / send SSO token
+   - pricingModel (string) // simple text for now, e.g. "per_call", "per_minute"
+   - clientId (string, unique) // for SSO / API identification
+   - clientSecret (string) // keep secret f
