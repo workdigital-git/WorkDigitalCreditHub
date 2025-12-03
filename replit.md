@@ -125,12 +125,62 @@ Apps use their admin-issued API keys to access authorized users' credits:
 - `POST /api/v2/debit` - Debit authorized user's credits (app API key auth)
 - `POST /api/v2/check-authorization` - Check if user authorized this app
 
-### OAuth2 / OpenID Connect
-- `GET /api/oauth/authorize` - OAuth2 authorization endpoint (requires auth, PKCE required)
+### OAuth2 / OpenID Connect (SSO)
+- `GET /oauth/authorize` - **Frontend SSO page** - Handles login + consent, redirects with code
+- `GET /api/oauth/app-info?client_id=xxx` - Get app name/description for SSO UI
+- `GET /api/oauth/authorize` - API authorization endpoint (requires auth, PKCE required)
 - `POST /api/oauth/token` - Token exchange endpoint
 - `POST /api/oauth/introspect` - Token introspection endpoint
 - `POST /api/oauth/revoke` - Token revocation endpoint
 - `GET /api/oauth/userinfo` - OpenID Connect userinfo endpoint
+
+## OAuth2 SSO Integration Guide
+
+External apps can implement "Sign in with Work Digital" using OAuth2 + PKCE:
+
+### SSO Flow
+1. **Redirect to**: `/oauth/authorize?client_id=xxx&redirect_uri=xxx&response_type=code&code_challenge=xxx&code_challenge_method=S256&state=xxx`
+2. User logs in (if needed) and sees consent screen
+3. Redirected back to `redirect_uri` with `?code=xxx&state=xxx`
+4. Exchange code at `POST /api/oauth/token` with `code_verifier`
+
+### Required Parameters
+| Parameter | Description |
+|-----------|-------------|
+| `client_id` | App's client ID (from admin registration) |
+| `redirect_uri` | Must match registered callback URL |
+| `response_type` | Must be "code" |
+| `code_challenge` | Base64url SHA256 of code_verifier |
+| `code_challenge_method` | Must be "S256" |
+
+### Optional Parameters
+| Parameter | Description |
+|-----------|-------------|
+| `state` | CSRF protection token (recommended) |
+| `scope` | Space-separated: openid, profile, credits |
+
+### Token Exchange
+```
+POST /api/oauth/token
+{
+  "grant_type": "authorization_code",
+  "code": "...",
+  "redirect_uri": "...",
+  "client_id": "...",
+  "client_secret": "...",
+  "code_verifier": "..."
+}
+```
+
+### Response
+```json
+{
+  "access_token": "...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "user": { "id": "...", "email": "...", "fullName": "..." }
+}
+```
 
 ## Development
 

@@ -14,6 +14,7 @@ import BillingPage from "@/pages/billing";
 import SettingsPage from "@/pages/settings";
 import AdminPage from "@/pages/admin";
 import ApiDocsPage from "@/pages/api-docs";
+import OAuthAuthorizePage from "@/pages/oauth-authorize";
 import { Loader2 } from "lucide-react";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -82,6 +83,7 @@ function Router() {
       <Route path="/api-docs">
         <ProtectedRoute component={ApiDocsPage} />
       </Route>
+      <Route path="/oauth/authorize" component={OAuthAuthorizePage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -1468,6 +1468,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/oauth/app-info", async (req, res) => {
+    try {
+      const { client_id } = req.query as { client_id?: string };
+      
+      if (!client_id) {
+        return res.status(400).json({ error: "client_id is required" });
+      }
+
+      const appRecord = await storage.getAppByClientId(client_id);
+      if (!appRecord) {
+        return res.status(404).json({ error: "Unknown client_id" });
+      }
+
+      res.json({
+        id: appRecord.id,
+        name: appRecord.name,
+        description: appRecord.description,
+        logoUrl: appRecord.iconUrl,
+      });
+    } catch (error) {
+      console.error("OAuth app-info error:", error);
+      res.status(500).json({ error: "Failed to get app info" });
+    }
+  });
+
   app.get("/api/oauth/authorize", authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { 

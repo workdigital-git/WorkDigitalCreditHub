@@ -20,6 +20,9 @@ import {
   CheckCircle2,
   Terminal,
   Globe,
+  LogIn,
+  ArrowRight,
+  Lock,
 } from "lucide-react";
 
 function CodeBlock({ code, language = "bash" }: { code: string; language?: string }) {
@@ -141,14 +144,18 @@ export default function ApiDocsPage() {
         </div>
 
         <Tabs defaultValue="quickstart" className="space-y-4">
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="quickstart" data-testid="tab-quickstart">
               <Zap className="h-4 w-4 mr-2" />
               Quick Start
             </TabsTrigger>
+            <TabsTrigger value="sso" data-testid="tab-sso">
+              <LogIn className="h-4 w-4 mr-2" />
+              SSO / OAuth2
+            </TabsTrigger>
             <TabsTrigger value="auth" data-testid="tab-auth">
               <Key className="h-4 w-4 mr-2" />
-              Authentication
+              API Keys
             </TabsTrigger>
             <TabsTrigger value="endpoints" data-testid="tab-endpoints">
               <Terminal className="h-4 w-4 mr-2" />
@@ -271,6 +278,325 @@ curl -X POST "https://your-domain.com/api/v2/balance" \\
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="sso" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <LogIn className="h-5 w-5" />
+                  Single Sign-On (SSO) with OAuth2 + PKCE
+                </CardTitle>
+                <CardDescription>
+                  Allow users to sign in to your app using their Work Digital credentials
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                  <h3 className="font-medium mb-2 flex items-center gap-2">
+                    <Shield className="h-4 w-4" />
+                    Security First
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    This implementation uses OAuth 2.0 Authorization Code flow with PKCE (Proof Key for Code Exchange),
+                    which is the recommended approach for web and mobile applications.
+                  </p>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h3 className="font-medium">SSO Flow Overview</h3>
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-xs">1</div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">User clicks "Sign in with Work Digital"</p>
+                        <p className="text-xs text-muted-foreground">Your app generates PKCE codes and redirects to the authorization endpoint</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-xs">2</div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">User authenticates at Work Digital</p>
+                        <p className="text-xs text-muted-foreground">User logs in (if needed) and authorizes your app</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-xs">3</div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Redirect back with authorization code</p>
+                        <p className="text-xs text-muted-foreground">Work Digital redirects to your callback URL with a temporary code</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-xs">4</div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium">Exchange code for access token</p>
+                        <p className="text-xs text-muted-foreground">Your server exchanges the code + code_verifier for an access token</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h3 className="font-medium flex items-center gap-2">
+                    <Lock className="h-4 w-4" />
+                    Authorization Endpoint
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-blue-500/10 text-blue-600">GET</Badge>
+                      <code className="text-sm font-mono bg-muted px-2 py-1 rounded">/oauth/authorize</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Redirect users to this URL to start the SSO flow. This is a frontend page that handles
+                      login (if needed) and user consent.
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Required Query Parameters:</p>
+                    <div className="grid gap-2">
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">client_id</code>
+                        <span className="text-sm text-muted-foreground">Your app's client ID (provided by admin)</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">redirect_uri</code>
+                        <span className="text-sm text-muted-foreground">Your callback URL (must match registered URL)</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">response_type</code>
+                        <span className="text-sm text-muted-foreground">Must be "code"</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">code_challenge</code>
+                        <span className="text-sm text-muted-foreground">Base64url-encoded SHA256 hash of code_verifier</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">code_challenge_method</code>
+                        <span className="text-sm text-muted-foreground">Must be "S256"</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Optional Parameters:</p>
+                    <div className="grid gap-2">
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">state</code>
+                        <span className="text-sm text-muted-foreground">Random string to prevent CSRF (recommended)</span>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                        <code className="text-xs bg-background px-1.5 py-0.5 rounded font-mono">scope</code>
+                        <span className="text-sm text-muted-foreground">Space-separated scopes: openid, profile, credits</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <CodeBlock code={`# Example authorization URL
+https://your-credits-hub.com/oauth/authorize?
+  client_id=client_abc123def456&
+  redirect_uri=https://yourapp.com/callback&
+  response_type=code&
+  code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&
+  code_challenge_method=S256&
+  state=xyz789&
+  scope=openid%20profile%20credits`} />
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h3 className="font-medium">Callback Response</h3>
+                  <p className="text-sm text-muted-foreground">
+                    After successful authorization, the user is redirected to your callback URL with:
+                  </p>
+                  <CodeBlock code={`# Success response
+https://yourapp.com/callback?code=abc123...&state=xyz789
+
+# Error response
+https://yourapp.com/callback?error=access_denied&error_description=User%20denied`} />
+                </div>
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <h3 className="font-medium">Token Exchange Endpoint</h3>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Badge className="bg-blue-500/10 text-blue-600">POST</Badge>
+                      <code className="text-sm font-mono bg-muted px-2 py-1 rounded">/api/oauth/token</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Exchange the authorization code for an access token.
+                    </p>
+                  </div>
+
+                  <CodeBlock code={`POST /api/oauth/token
+Content-Type: application/json
+
+{
+  "grant_type": "authorization_code",
+  "code": "abc123...",
+  "redirect_uri": "https://yourapp.com/callback",
+  "client_id": "client_abc123def456",
+  "client_secret": "your_client_secret",
+  "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+}`} />
+
+                  <p className="text-sm font-medium">Response:</p>
+                  <CodeBlock code={`{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "user": {
+    "id": "user_123",
+    "email": "user@example.com",
+    "fullName": "John Doe"
+  }
+}`} />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Code className="h-5 w-5" />
+                  Implementation Example
+                </CardTitle>
+                <CardDescription>
+                  Complete Node.js example for implementing SSO
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <CodeBlock code={`import crypto from 'crypto';
+
+const CREDITS_HUB_URL = 'https://your-credits-hub.com';
+const CLIENT_ID = process.env.CREDITS_HUB_CLIENT_ID;
+const CLIENT_SECRET = process.env.CREDITS_HUB_CLIENT_SECRET;
+const REDIRECT_URI = 'https://yourapp.com/auth/callback';
+
+// Generate PKCE codes
+function generatePKCE() {
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto
+    .createHash('sha256')
+    .update(codeVerifier)
+    .digest('base64url');
+  return { codeVerifier, codeChallenge };
+}
+
+// Step 1: Redirect to authorization
+app.get('/auth/login', (req, res) => {
+  const { codeVerifier, codeChallenge } = generatePKCE();
+  const state = crypto.randomBytes(16).toString('hex');
+  
+  // Store in session for verification
+  req.session.pkce = { codeVerifier, state };
+  
+  const authUrl = new URL(\`\${CREDITS_HUB_URL}/oauth/authorize\`);
+  authUrl.searchParams.set('client_id', CLIENT_ID);
+  authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
+  authUrl.searchParams.set('response_type', 'code');
+  authUrl.searchParams.set('code_challenge', codeChallenge);
+  authUrl.searchParams.set('code_challenge_method', 'S256');
+  authUrl.searchParams.set('state', state);
+  authUrl.searchParams.set('scope', 'openid profile credits');
+  
+  res.redirect(authUrl.toString());
+});
+
+// Step 2: Handle callback
+app.get('/auth/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  
+  if (error) {
+    return res.status(400).send(\`Authorization failed: \${error}\`);
+  }
+  
+  // Verify state
+  if (state !== req.session.pkce?.state) {
+    return res.status(400).send('Invalid state parameter');
+  }
+  
+  // Exchange code for token
+  const tokenResponse = await fetch(\`\${CREDITS_HUB_URL}/api/oauth/token\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      code_verifier: req.session.pkce.codeVerifier,
+    }),
+  });
+  
+  const { access_token, user } = await tokenResponse.json();
+  
+  // Create session for user
+  req.session.user = user;
+  req.session.accessToken = access_token;
+  
+  res.redirect('/dashboard');
+});`} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Terminal className="h-5 w-5" />
+                  Additional OAuth Endpoints
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4">
+                  <div className="p-4 rounded-lg border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-500/10 text-blue-600">POST</Badge>
+                      <code className="text-sm font-mono">/api/oauth/introspect</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Validate an access token and get user information.
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-blue-500/10 text-blue-600">POST</Badge>
+                      <code className="text-sm font-mono">/api/oauth/revoke</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Revoke an access token when user logs out.
+                    </p>
+                  </div>
+                  <div className="p-4 rounded-lg border">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge className="bg-green-500/10 text-green-600">GET</Badge>
+                      <code className="text-sm font-mono">/api/oauth/userinfo</code>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      OpenID Connect userinfo endpoint - get user profile with access token.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="auth" className="space-y-6">
