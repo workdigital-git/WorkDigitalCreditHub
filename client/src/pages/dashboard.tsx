@@ -190,7 +190,7 @@ export default function DashboardPage() {
               Welcome to Work Digital
             </h1>
             <p className="text-muted-foreground">
-              Your credits power services like BigBrandForge and more
+              Manage your credits and connected services
             </p>
           </div>
           <div className="flex gap-2">
@@ -304,7 +304,7 @@ export default function DashboardPage() {
             <CardHeader className="flex flex-row items-center justify-between gap-4">
               <div>
                 <CardTitle className="text-lg">Connected Services</CardTitle>
-                <CardDescription>Work Digital integrations</CardDescription>
+                <CardDescription>Your authorized integrations</CardDescription>
               </div>
               <Link href="/apps">
                 <Button variant="ghost" size="sm" data-testid="link-view-all-apps">
@@ -341,7 +341,7 @@ export default function DashboardPage() {
                   </div>
                   <p className="text-sm font-medium">No connected services</p>
                   <p className="text-sm text-muted-foreground">
-                    Connect Work Digital services to get started
+                    Connect a service to get started
                   </p>
                   <Link href="/apps">
                     <Button className="mt-4" size="sm" data-testid="button-browse-apps-empty">

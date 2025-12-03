@@ -450,12 +450,12 @@ function EmptyState({ type, searchQuery }: { type: 'connected' | 'discover' | 's
     connected: {
       icon: Link2,
       title: "No connected services",
-      description: "Connect Work Digital services to use your credits for AI-powered tools. Browse available services in the Discover tab.",
+      description: "You haven't connected any services yet. Browse available services in the Discover tab.",
     },
     discover: {
       icon: Compass,
       title: "No services available",
-      description: "New Work Digital services will appear here. Check back soon!",
+      description: "No services are currently available. Check back later.",
     },
     search: {
       icon: Search,
@@ -592,10 +592,10 @@ export default function AppsPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
-              Work Digital Services
+              Services
             </h1>
             <p className="text-muted-foreground mt-1">
-              Connect to services that use your credits for AI-powered tools and more
+              Manage your connected services and authorizations
             </p>
           </div>
         </div>
