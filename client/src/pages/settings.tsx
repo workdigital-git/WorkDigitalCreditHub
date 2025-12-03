@@ -255,7 +255,7 @@ function SecurityTab() {
   const initSetupMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/user/2fa/setup");
-      return res as unknown as TwoFactorSetup;
+      return res.json() as Promise<TwoFactorSetup>;
     },
     onSuccess: (data) => {
       setSetupData(data);
@@ -476,7 +476,7 @@ function ApiKeysTab() {
   const createMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/api-keys", { name: keyName });
-      return res as unknown as { key: string; apiKey: ApiKey };
+      return res.json() as Promise<{ key: string; apiKey: ApiKey }>;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/api-keys"] });
