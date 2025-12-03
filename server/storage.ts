@@ -8,6 +8,7 @@ import {
   appSubscriptions,
   apiKeys,
   refreshTokens,
+  auditLogs,
   type User,
   type InsertUser,
   type Wallet,
@@ -25,6 +26,8 @@ import {
   type ApiKey,
   type InsertApiKey,
   type RefreshToken,
+  type AuditLog,
+  type InsertAuditLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -88,6 +91,10 @@ export interface IStorage {
     totalBalance: number;
     totalTransactions: number;
   }>;
+
+  createAuditLog(log: Omit<AuditLog, "id" | "createdAt">): Promise<AuditLog>;
+  getAuditLogsByUserId(userId: string, limit?: number): Promise<AuditLog[]>;
+  getAuditLogs(limit?: number): Promise<AuditLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -364,6 +371,28 @@ export class DatabaseStorage implements IStorage {
       totalBalance: Number(balanceSum?.sum || 0),
       totalTransactions: Number(txCount?.count || 0),
     };
+  }
+
+  async createAuditLog(log: Omit<AuditLog, "id" | "createdAt">): Promise<AuditLog> {
+    const [created] = await db.insert(auditLogs).values(log).returning();
+    return created;
+  }
+
+  async getAuditLogsByUserId(userId: string, limit = 100): Promise<AuditLog[]> {
+    return db
+      .select()
+      .from(auditLogs)
+      .where(eq(auditLogs.userId, userId))
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(limit);
+  }
+
+  async getAuditLogs(limit = 100): Promise<AuditLog[]> {
+    return db
+      .select()
+      .from(auditLogs)
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(limit);
   }
 }
 

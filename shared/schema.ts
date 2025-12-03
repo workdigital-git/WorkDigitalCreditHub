@@ -11,6 +11,28 @@ export const transactionTypeEnum = pgEnum("transaction_type", ["CREDIT", "DEBIT"
 
 export const transactionStatusEnum = pgEnum("transaction_status", ["PENDING", "COMPLETED", "FAILED"]);
 
+export const auditEventTypeEnum = pgEnum("audit_event_type", [
+  "AUTH_LOGIN", "AUTH_LOGOUT", "AUTH_REGISTER", "AUTH_PASSWORD_CHANGE", "AUTH_2FA_ENABLE", "AUTH_2FA_DISABLE",
+  "WALLET_FUND", "WALLET_DEBIT", "WALLET_AUTO_TOPUP",
+  "PAYMENT_METHOD_ADD", "PAYMENT_METHOD_REMOVE", "PAYMENT_METHOD_SET_DEFAULT",
+  "API_KEY_CREATE", "API_KEY_REVOKE",
+  "APP_SUBSCRIBE", "APP_UNSUBSCRIBE",
+  "ADMIN_ACTION"
+]);
+
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+  eventType: auditEventTypeEnum("event_type").notNull(),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  action: text("action").notNull(),
+  details: text("details"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const users = pgTable("users", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
@@ -163,6 +185,10 @@ export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
   user: one(users, { fields: [refreshTokens.userId], references: [users.id] }),
 }));
 
+export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
+  user: one(users, { fields: [auditLogs.userId], references: [users.id] }),
+}));
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
@@ -224,6 +250,11 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
   lastUsedAt: true,
 });
 
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const fundWalletSchema = z.object({
   amountCents: z.number().min(100, "Minimum amount is $1.00"),
   paymentMethodId: z.string().uuid(),
@@ -254,3 +285,5 @@ export type InsertAppSubscription = z.infer<typeof insertAppSubscriptionSchema>;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 export type RefreshToken = typeof refreshTokens.$inferSelect;
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;

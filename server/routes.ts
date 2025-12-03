@@ -139,6 +139,39 @@ async function adminMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   next();
 }
 
+type AuditEventType = 
+  | "AUTH_LOGIN" | "AUTH_LOGOUT" | "AUTH_REGISTER" | "AUTH_PASSWORD_CHANGE" | "AUTH_2FA_ENABLE" | "AUTH_2FA_DISABLE"
+  | "WALLET_FUND" | "WALLET_DEBIT" | "WALLET_AUTO_TOPUP"
+  | "PAYMENT_METHOD_ADD" | "PAYMENT_METHOD_REMOVE" | "PAYMENT_METHOD_SET_DEFAULT"
+  | "API_KEY_CREATE" | "API_KEY_REVOKE"
+  | "APP_SUBSCRIBE" | "APP_UNSUBSCRIBE"
+  | "ADMIN_ACTION";
+
+async function createAuditLog(
+  req: Request,
+  eventType: AuditEventType,
+  action: string,
+  userId: string | null,
+  entityType?: string,
+  entityId?: string,
+  details?: Record<string, unknown>
+): Promise<void> {
+  try {
+    await storage.createAuditLog({
+      userId,
+      eventType,
+      entityType: entityType || null,
+      entityId: entityId || null,
+      action,
+      details: details ? JSON.stringify(details) : null,
+      ipAddress: req.ip || req.socket.remoteAddress || null,
+      userAgent: req.headers["user-agent"] || null,
+    });
+  } catch (error) {
+    console.error("Failed to create audit log:", error);
+  }
+}
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.post("/api/auth/register", async (req, res) => {
     try {
@@ -191,6 +224,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         sameSite: "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
+
+      await createAuditLog(req, "AUTH_REGISTER", "User registered", user.id, "user", user.id, { email: user.email });
 
       const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
       res.status(201).json({ user: safeUser });
@@ -250,6 +285,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         sameSite: "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
+
+      await createAuditLog(req, "AUTH_LOGIN", "User logged in", user.id, "user", user.id, { email: user.email, twoFactorUsed: user.twoFactorEnabled });
 
       const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
       res.json({ user: safeUser });
@@ -319,6 +356,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
 
+      let userId: string | null = null;
+      try {
+        const accessToken = req.cookies?.accessToken;
+        if (accessToken) {
+          const decoded = jwt.verify(accessToken, JWT_SECRET) as { userId: string };
+          userId = decoded.userId;
+        }
+      } catch {}
+
+      if (userId) {
+        await createAuditLog(req, "AUTH_LOGOUT", "User logged out", userId, "user", userId);
+      }
+
       res.clearCookie("accessToken");
       res.clearCookie("refreshToken");
       res.json({ success: true });
@@ -383,6 +433,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const passwordHash = await bcrypt.hash(newPassword, 12);
       await storage.updateUser(req.user!.id, { passwordHash });
 
+      await createAuditLog(req, "AUTH_PASSWORD_CHANGE", "Password changed", req.user!.id, "user", req.user!.id);
+
       res.json({ success: true });
     } catch (error) {
       console.error("Change password error:", error);
@@ -434,6 +486,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       await storage.updateUser(req.user!.id, { twoFactorEnabled: true });
 
+      await createAuditLog(req, "AUTH_2FA_ENABLE", "Two-factor authentication enabled", req.user!.id, "user", req.user!.id);
+
       res.json({ success: true });
     } catch (error) {
       console.error("2FA confirm error:", error);
@@ -447,6 +501,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         twoFactorEnabled: false,
         twoFactorSecret: null,
       });
+
+      await createAuditLog(req, "AUTH_2FA_DISABLE", "Two-factor authentication disabled", req.user!.id, "user", req.user!.id);
 
       res.json({ success: true });
     } catch (error) {
@@ -541,6 +597,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage.updateWalletBalance(wallet.id, amountCents);
       await storage.updateTransactionStatus(transaction.id, "COMPLETED");
 
+      await createAuditLog(req, "WALLET_FUND", "Added funds to wallet", req.user!.id, "wallet", wallet.id, { amountCents, transactionId: transaction.id, paymentMethodId });
+
       res.json({ transaction });
     } catch (error) {
       console.error("Fund wallet error:", error);
@@ -621,6 +679,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         isDefault,
       });
 
+      await createAuditLog(req, "PAYMENT_METHOD_ADD", "Payment method added", req.user!.id, "paymentMethod", method.id, { type, brand, last4 });
+
       res.status(201).json(method);
     } catch (error) {
       console.error("Create payment method error:", error);
@@ -637,6 +697,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       await storage.setDefaultPaymentMethod(req.user!.id, req.params.id);
 
+      await createAuditLog(req, "PAYMENT_METHOD_SET_DEFAULT", "Payment method set as default", req.user!.id, "paymentMethod", req.params.id);
+
       res.json({ success: true });
     } catch (error) {
       console.error("Set default payment method error:", error);
@@ -652,6 +714,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       await storage.deletePaymentMethod(req.params.id);
+
+      await createAuditLog(req, "PAYMENT_METHOD_REMOVE", "Payment method removed", req.user!.id, "paymentMethod", req.params.id, { type: method.type, brand: method.brand });
 
       res.json({ success: true });
     } catch (error) {
@@ -700,6 +764,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         });
       }
 
+      await createAuditLog(req, "APP_SUBSCRIBE", "Subscribed to app", req.user!.id, "app", req.params.id, { appName: app.name });
+
       res.json({ success: true });
     } catch (error) {
       console.error("Subscribe error:", error);
@@ -710,6 +776,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/apps/:id/unsubscribe", authMiddleware, async (req: AuthRequest, res) => {
     try {
       await storage.cancelAppSubscription(req.user!.id, req.params.id);
+
+      await createAuditLog(req, "APP_UNSUBSCRIBE", "Unsubscribed from app", req.user!.id, "app", req.params.id);
+
       res.json({ success: true });
     } catch (error) {
       console.error("Unsubscribe error:", error);
@@ -748,6 +817,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lastUsedAt: null,
       });
 
+      await createAuditLog(req, "API_KEY_CREATE", "API key created", req.user!.id, "apiKey", apiKey.id, { name, keyPrefix });
+
       res.status(201).json({ key, apiKey });
     } catch (error) {
       console.error("Create API key error:", error);
@@ -763,6 +834,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       await storage.deleteApiKey(req.params.id);
+
+      await createAuditLog(req, "API_KEY_REVOKE", "API key revoked", req.user!.id, "apiKey", req.params.id, { name: key.name });
+
       res.json({ success: true });
     } catch (error) {
       console.error("Delete API key error:", error);
@@ -949,8 +1023,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
 
       await storage.updateWalletBalance(wallet.id, -amountCents);
+
+      await createAuditLog(req, "WALLET_DEBIT", "External API debit", apiKey.userId, "wallet", wallet.id, { amountCents, transactionId: transaction.id, appId, apiKeyId: apiKey.id });
       
       const autoTopupResult = await checkAndExecuteAutoTopup(apiKey.userId, wallet.id);
+
+      if (autoTopupResult.triggered) {
+        await createAuditLog(req, "WALLET_AUTO_TOPUP", "Auto top-up triggered", apiKey.userId, "wallet", wallet.id, { amountCents: autoTopupResult.amountCents, transactionId: autoTopupResult.transactionId });
+      }
 
       const finalWallet = await storage.getWallet(wallet.id);
       const finalBalanceCents = finalWallet?.balanceCents ?? (wallet.balanceCents - amountCents);
@@ -968,6 +1048,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("External debit error:", error);
       res.status(500).json({ message: "Failed to process debit" });
+    }
+  });
+
+  app.get("/api/admin/audit-logs", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const logs = await storage.getAuditLogs(limit);
+      res.json(logs);
+    } catch (error) {
+      console.error("Get audit logs error:", error);
+      res.status(500).json({ message: "Failed to get audit logs" });
+    }
+  });
+
+  app.get("/api/user/audit-logs", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const logs = await storage.getAuditLogsByUserId(req.user!.id, limit);
+      res.json(logs);
+    } catch (error) {
+      console.error("Get user audit logs error:", error);
+      res.status(500).json({ message: "Failed to get audit logs" });
     }
   });
 

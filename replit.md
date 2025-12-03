@@ -155,9 +155,34 @@ The auto-topup feature automatically adds funds when the wallet balance drops be
 3. **Execution**: System uses the configured payment method to add the top-up amount
 4. **Response**: The debit API returns `autoTopup` field when triggered, showing the amount and transaction ID
 
+## Audit Logging System
+
+Comprehensive audit logging for all financial transactions and authentication events:
+
+**Event Types:**
+- `AUTH_LOGIN`, `AUTH_LOGOUT`, `AUTH_REGISTER`, `AUTH_PASSWORD_CHANGE`, `AUTH_2FA_ENABLE`, `AUTH_2FA_DISABLE`
+- `WALLET_FUND`, `WALLET_DEBIT`, `WALLET_AUTO_TOPUP`
+- `PAYMENT_METHOD_ADD`, `PAYMENT_METHOD_REMOVE`, `PAYMENT_METHOD_SET_DEFAULT`
+- `API_KEY_CREATE`, `API_KEY_REVOKE`
+- `APP_SUBSCRIBE`, `APP_UNSUBSCRIBE`
+- `ADMIN_ACTION`
+
+**API Endpoints:**
+- `GET /api/admin/audit-logs` - Admin view all audit logs
+- `GET /api/user/audit-logs` - User view their own audit logs
+
+**Log Details:**
+- User ID, event type, entity type/ID
+- Action description, JSON details
+- IP address, user agent, timestamp
+
 ## User Preferences
 
 - Design follows Stripe-inspired minimal aesthetic
 - Inter font family for typography
 - Blue primary color scheme
 - Subtle shadows and borders for card elements
+
+## Integration Notes
+
+- **Stripe Integration**: User chose to skip Stripe integration (dismissed connector setup on 2025-12-03). Currently using simulated payment processing. To enable real payments in the future, user can provide STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY secrets.
