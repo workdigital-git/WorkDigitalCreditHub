@@ -70,14 +70,18 @@ export const webhookEvents = pgTable("webhook_events", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const twoFactorMethodEnum = pgEnum("two_factor_method", ["TOTP", "SMS"]);
+
 export const users = pgTable("users", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
   phone: text("phone").unique(),
+  phoneVerified: boolean("phone_verified").default(false).notNull(),
   passwordHash: text("password_hash").notNull(),
   fullName: text("full_name"),
   isAdmin: boolean("is_admin").default(false).notNull(),
   twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
+  twoFactorMethod: twoFactorMethodEnum("two_factor_method").default("TOTP"),
   twoFactorSecret: text("two_factor_secret"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -187,6 +191,19 @@ export const refreshTokens = pgTable("refresh_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const smsOtpCodes = pgTable("sms_otp_codes", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "cascade" }),
+  phone: text("phone").notNull(),
+  codeHash: text("code_hash").notNull(),
+  purpose: text("purpose").notNull(),
+  attempts: bigint("attempts", { mode: "number" }).default(0).notNull(),
+  maxAttempts: bigint("max_attempts", { mode: "number" }).default(3).notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const usersRelations = relations(users, ({ one, many }) => ({
   wallet: one(wallets, { fields: [users.id], references: [wallets.userId] }),
   paymentMethods: many(paymentMethods),
@@ -236,6 +253,10 @@ export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
   user: one(users, { fields: [refreshTokens.userId], references: [users.id] }),
 }));
 
+export const smsOtpCodesRelations = relations(smsOtpCodes, ({ one }) => ({
+  user: one(users, { fields: [smsOtpCodes.userId], references: [users.id] }),
+}));
+
 export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   user: one(users, { fields: [auditLogs.userId], references: [users.id] }),
 }));
@@ -258,6 +279,7 @@ export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(1, "Password is required"),
   totpCode: z.string().optional(),
+  smsCode: z.string().optional(),
 });
 
 export const insertWalletSchema = createInsertSchema(wallets).omit({
@@ -318,6 +340,12 @@ export const insertWebhookEventSchema = createInsertSchema(webhookEvents).omit({
   processedAt: true,
 });
 
+export const insertSmsOtpCodeSchema = createInsertSchema(smsOtpCodes).omit({
+  id: true,
+  createdAt: true,
+  usedAt: true,
+});
+
 export const fundWalletSchema = z.object({
   amountCents: z.number().min(100, "Minimum amount is $1.00"),
   paymentMethodId: z.string().uuid(),
@@ -352,3 +380,5 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type WebhookEvent = typeof webhookEvents.$inferSelect;
 export type InsertWebhookEvent = z.infer<typeof insertWebhookEventSchema>;
+export type SmsOtpCode = typeof smsOtpCodes.$inferSelect;
+export type InsertSmsOtpCode = z.infer<typeof insertSmsOtpCodeSchema>;

@@ -14,6 +14,7 @@ import {
   insertPaymentMethodSchema,
   insertAppSchema,
 } from "@shared/schema";
+import { sendOtpCode, verifyOtpCode, isPlivo_configured, normalizePhoneNumber, validatePhoneNumber } from "./sms-service";
 
 if (!process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET environment variable is required for JWT authentication");
@@ -52,6 +53,33 @@ function generateClientCredentials(): { clientId: string; clientSecret: string }
     clientId: `client_${randomBytes(16).toString("hex")}`,
     clientSecret: randomBytes(32).toString("hex"),
   };
+}
+
+function prepareSafeUserResponse(user: { 
+  id: string; 
+  email: string; 
+  fullName: string | null; 
+  phone: string | null; 
+  phoneVerified: boolean;
+  isAdmin: boolean;
+  twoFactorEnabled: boolean;
+  twoFactorMethod: string | null;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  passwordHash?: string;
+  twoFactorSecret?: string | null;
+}) {
+  const { passwordHash, twoFactorSecret, phone, ...rest } = user;
+  let maskedPhone = null;
+  if (phone) {
+    const normalizedPhone = normalizePhoneNumber(phone);
+    if (validatePhoneNumber(normalizedPhone)) {
+      maskedPhone = rest.phoneVerified ? normalizedPhone : `***${normalizedPhone.slice(-4)}`;
+    } else {
+      maskedPhone = "***invalid";
+    }
+  }
+  return { ...rest, phone: maskedPhone };
 }
 
 async function checkAndExecuteAutoTopup(userId: string, walletId: string): Promise<{ triggered: boolean; newBalance?: number; transactionId?: string; amountCents?: number }> {
@@ -187,14 +215,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "Email already registered" });
       }
 
+      let normalizedPhone = null;
+      if (phone) {
+        normalizedPhone = normalizePhoneNumber(phone);
+        if (!validatePhoneNumber(normalizedPhone)) {
+          return res.status(400).json({ message: "Invalid phone number format. Use format: +12025551234" });
+        }
+      }
       const passwordHash = await bcrypt.hash(password, 12);
       const user = await storage.createUser({
         email,
         passwordHash,
         fullName: fullName || null,
-        phone: phone || null,
+        phone: normalizedPhone,
+        phoneVerified: false,
         isAdmin: false,
         twoFactorEnabled: false,
+        twoFactorMethod: "TOTP",
         twoFactorSecret: null,
       });
 
@@ -227,7 +264,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       await createAuditLog(req, "AUTH_REGISTER", "User registered", user.id, "user", user.id, { email: user.email });
 
-      const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
+      const safeUser = prepareSafeUserResponse(user);
       res.status(201).json({ user: safeUser });
     } catch (error) {
       console.error("Registration error:", error);
@@ -242,26 +279,70 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: validation.error.errors[0].message });
       }
 
-      const { email, password, totpCode } = validation.data;
+      const { email, password, totpCode, smsCode } = validation.data;
       const user = await storage.getUserByEmail(email);
 
       if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
-      if (user.twoFactorEnabled && user.twoFactorSecret) {
-        if (!totpCode) {
-          return res.status(200).json({ requiresTwoFactor: true });
-        }
+      if (user.twoFactorEnabled) {
+        const method = user.twoFactorMethod || "TOTP";
 
-        const isValid = speakeasy.totp.verify({
-          secret: user.twoFactorSecret,
-          encoding: "base32",
-          token: totpCode,
-        });
+        if (method === "TOTP") {
+          if (!user.twoFactorSecret) {
+            return res.status(403).json({ 
+              message: "Your 2FA is misconfigured. Please contact support to reset your account." 
+            });
+          }
+          
+          if (!totpCode) {
+            return res.status(200).json({ requiresTwoFactor: true, method: "TOTP" });
+          }
 
-        if (!isValid) {
-          return res.status(401).json({ message: "Invalid 2FA code" });
+          const isValid = speakeasy.totp.verify({
+            secret: user.twoFactorSecret,
+            encoding: "base32",
+            token: totpCode,
+          });
+
+          if (!isValid) {
+            return res.status(401).json({ message: "Invalid 2FA code" });
+          }
+        } else if (method === "SMS") {
+          if (!user.phone || !user.phoneVerified) {
+            return res.status(403).json({ 
+              message: "Your SMS 2FA is misconfigured. Please contact support to reset your account." 
+            });
+          }
+          
+          if (!isPlivo_configured()) {
+            return res.status(503).json({ 
+              message: "SMS service not available. Please contact support to reset your 2FA method." 
+            });
+          }
+
+          if (!smsCode) {
+            const sendResult = await sendOtpCode(user.phone, "TWO_FACTOR_AUTH", user.id);
+            if (!sendResult.success) {
+              return res.status(500).json({ message: sendResult.error || "Failed to send SMS code" });
+            }
+            const normalizedPhone = normalizePhoneNumber(user.phone);
+            return res.status(200).json({ 
+              requiresTwoFactor: true, 
+              method: "SMS",
+              phoneLast4: normalizedPhone.slice(-4),
+            });
+          }
+
+          const verifyResult = await verifyOtpCode(user.phone, smsCode, "TWO_FACTOR_AUTH");
+          if (!verifyResult.success) {
+            return res.status(401).json({ message: verifyResult.error || "Invalid SMS code" });
+          }
+        } else {
+          return res.status(403).json({ 
+            message: "Your 2FA method is not recognized. Please contact support to reset your account." 
+          });
         }
       }
 
@@ -286,13 +367,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      await createAuditLog(req, "AUTH_LOGIN", "User logged in", user.id, "user", user.id, { email: user.email, twoFactorUsed: user.twoFactorEnabled });
+      await createAuditLog(req, "AUTH_LOGIN", "User logged in", user.id, "user", user.id, { email: user.email, twoFactorUsed: user.twoFactorEnabled, twoFactorMethod: user.twoFactorMethod });
 
-      const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
+      const safeUser = prepareSafeUserResponse(user);
       res.json({ user: safeUser });
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  app.post("/api/auth/2fa/resend-sms", async (req, res) => {
+    try {
+      if (!isPlivo_configured()) {
+        return res.status(503).json({ message: "SMS service is not configured" });
+      }
+
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const user = await storage.getUserByEmail(email);
+
+      if (!user || !user.twoFactorEnabled || user.twoFactorMethod !== "SMS" || !user.phone || !user.phoneVerified) {
+        return res.status(400).json({ message: "SMS 2FA not configured for this account" });
+      }
+
+      const result = await sendOtpCode(user.phone, "TWO_FACTOR_AUTH", user.id);
+
+      if (!result.success) {
+        return res.status(429).json({ message: result.error });
+      }
+
+      res.json({ success: true, message: "Verification code sent" });
+    } catch (error) {
+      console.error("2FA resend error:", error);
+      res.status(500).json({ message: "Failed to resend code" });
     }
   });
 
@@ -385,7 +497,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(404).json({ message: "User not found" });
       }
 
-      const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
+      const safeUser = prepareSafeUserResponse(user);
       res.json({ user: safeUser });
     } catch (error) {
       console.error("Get user error:", error);
@@ -396,16 +508,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/user/profile", authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { fullName, phone } = req.body;
+      
+      let normalizedPhone = null;
+      if (phone) {
+        normalizedPhone = normalizePhoneNumber(phone);
+        if (!validatePhoneNumber(normalizedPhone)) {
+          return res.status(400).json({ message: "Invalid phone number format. Use format: +12025551234" });
+        }
+      }
+      
       const user = await storage.updateUser(req.user!.id, {
         fullName: fullName || null,
-        phone: phone || null,
+        phone: normalizedPhone,
       });
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
+      const safeUser = prepareSafeUserResponse(user);
       res.json({ user: safeUser });
     } catch (error) {
       console.error("Update profile error:", error);
@@ -484,9 +605,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "Invalid verification code" });
       }
 
-      await storage.updateUser(req.user!.id, { twoFactorEnabled: true });
+      await storage.updateUser(req.user!.id, { 
+        twoFactorEnabled: true,
+        twoFactorMethod: "TOTP",
+      });
 
-      await createAuditLog(req, "AUTH_2FA_ENABLE", "Two-factor authentication enabled", req.user!.id, "user", req.user!.id);
+      await createAuditLog(req, "AUTH_2FA_ENABLE", "Two-factor authentication enabled", req.user!.id, "user", req.user!.id, { method: "TOTP" });
 
       res.json({ success: true });
     } catch (error) {
@@ -500,6 +624,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage.updateUser(req.user!.id, {
         twoFactorEnabled: false,
         twoFactorSecret: null,
+        twoFactorMethod: null,
       });
 
       await createAuditLog(req, "AUTH_2FA_DISABLE", "Two-factor authentication disabled", req.user!.id, "user", req.user!.id);
@@ -508,6 +633,186 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("2FA disable error:", error);
       res.status(500).json({ message: "Failed to disable 2FA" });
+    }
+  });
+
+  app.get("/api/user/2fa/sms/status", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const user = await storage.getUser(req.user!.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      let maskedPhone = null;
+      if (user.phone) {
+        const normalizedPhone = normalizePhoneNumber(user.phone);
+        maskedPhone = `***${normalizedPhone.slice(-4)}`;
+      }
+
+      res.json({
+        smsConfigured: isPlivo_configured(),
+        phoneVerified: user.phoneVerified,
+        phone: maskedPhone,
+        twoFactorMethod: user.twoFactorMethod,
+        twoFactorEnabled: user.twoFactorEnabled,
+      });
+    } catch (error) {
+      console.error("2FA SMS status error:", error);
+      res.status(500).json({ message: "Failed to get SMS 2FA status" });
+    }
+  });
+
+  app.post("/api/user/phone/add", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { phone } = req.body;
+
+      if (!phone || typeof phone !== "string") {
+        return res.status(400).json({ message: "Phone number is required" });
+      }
+
+      if (!isPlivo_configured()) {
+        return res.status(503).json({ message: "SMS service is not configured. Please contact support." });
+      }
+
+      const normalizedPhone = normalizePhoneNumber(phone);
+
+      if (!validatePhoneNumber(normalizedPhone)) {
+        return res.status(400).json({ message: "Invalid phone number format. Use format: +12025551234" });
+      }
+
+      await storage.updateUser(req.user!.id, {
+        phone: normalizedPhone,
+        phoneVerified: false,
+      });
+
+      const result = await sendOtpCode(normalizedPhone, "PHONE_VERIFICATION", req.user!.id);
+
+      if (!result.success) {
+        return res.status(500).json({ message: result.error || "Failed to send verification code" });
+      }
+
+      res.json({ success: true, message: "Verification code sent to your phone" });
+    } catch (error) {
+      console.error("Phone add error:", error);
+      res.status(500).json({ message: "Failed to add phone number" });
+    }
+  });
+
+  app.post("/api/user/phone/verify", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { code } = req.body;
+      const user = await storage.getUser(req.user!.id);
+
+      if (!user || !user.phone) {
+        return res.status(400).json({ message: "No phone number to verify" });
+      }
+
+      const result = await verifyOtpCode(user.phone, code, "PHONE_VERIFICATION");
+
+      if (!result.success) {
+        return res.status(400).json({ message: result.error });
+      }
+
+      await storage.updateUser(req.user!.id, { phoneVerified: true });
+
+      res.json({ success: true, message: "Phone number verified successfully" });
+    } catch (error) {
+      console.error("Phone verify error:", error);
+      res.status(500).json({ message: "Failed to verify phone number" });
+    }
+  });
+
+  app.post("/api/user/phone/resend", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      if (!isPlivo_configured()) {
+        return res.status(503).json({ message: "SMS service is not configured" });
+      }
+
+      const user = await storage.getUser(req.user!.id);
+
+      if (!user || !user.phone) {
+        return res.status(400).json({ message: "No phone number to verify" });
+      }
+
+      const result = await sendOtpCode(user.phone, "PHONE_VERIFICATION", req.user!.id);
+
+      if (!result.success) {
+        return res.status(429).json({ message: result.error });
+      }
+
+      res.json({ success: true, message: "Verification code sent" });
+    } catch (error) {
+      console.error("Phone resend error:", error);
+      res.status(500).json({ message: "Failed to resend verification code" });
+    }
+  });
+
+  app.post("/api/user/2fa/sms/setup", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      if (!isPlivo_configured()) {
+        return res.status(503).json({ message: "SMS service is not configured. Please use authenticator app instead." });
+      }
+
+      const user = await storage.getUser(req.user!.id);
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (!user.phone || !user.phoneVerified) {
+        return res.status(400).json({ message: "Please verify your phone number first" });
+      }
+
+      await storage.updateUser(req.user!.id, {
+        twoFactorEnabled: true,
+        twoFactorMethod: "SMS",
+      });
+
+      await createAuditLog(req, "AUTH_2FA_ENABLE", "SMS two-factor authentication enabled", req.user!.id, "user", req.user!.id, { method: "SMS" });
+
+      res.json({ success: true, message: "SMS 2FA enabled successfully" });
+    } catch (error) {
+      console.error("SMS 2FA setup error:", error);
+      res.status(500).json({ message: "Failed to setup SMS 2FA" });
+    }
+  });
+
+  app.post("/api/user/2fa/method", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { method } = req.body;
+
+      if (!["TOTP", "SMS"].includes(method)) {
+        return res.status(400).json({ message: "Invalid 2FA method" });
+      }
+
+      const user = await storage.getUser(req.user!.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (!user.twoFactorEnabled) {
+        return res.status(400).json({ message: "2FA is not enabled" });
+      }
+
+      if (method === "SMS") {
+        if (!isPlivo_configured()) {
+          return res.status(503).json({ message: "SMS service is not configured. Please use authenticator app." });
+        }
+        if (!user.phone || !user.phoneVerified) {
+          return res.status(400).json({ message: "Please verify your phone number first" });
+        }
+      }
+
+      if (method === "TOTP" && !user.twoFactorSecret) {
+        return res.status(400).json({ message: "Please set up TOTP first" });
+      }
+
+      await storage.updateUser(req.user!.id, { twoFactorMethod: method });
+
+      res.json({ success: true, method });
+    } catch (error) {
+      console.error("2FA method change error:", error);
+      res.status(500).json({ message: "Failed to change 2FA method" });
     }
   });
 
@@ -523,7 +828,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         recentTransactions = transactions;
       }
 
-      const activeSubscriptions = subscriptions.filter((s) => s.status === "active");
+      const activeSubscriptions = subscriptions.filter((s) => s.status === "ACTIVE");
 
       res.json({
         wallet,
@@ -780,6 +1085,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         nextBillingDate,
         totalUsageCount: 0,
         cancelledAt: null,
+        lastBilledAt: null,
       });
 
       await createAuditLog(req, "APP_SUBSCRIBE", "Subscribed to app", req.user!.id, "app", req.params.id, { 
@@ -926,7 +1232,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const usersWithWallets = await Promise.all(
         users.map(async (user) => {
           const wallet = await storage.getWalletByUserId(user.id);
-          const { passwordHash: _, twoFactorSecret: __, ...safeUser } = user;
+          const safeUser = prepareSafeUserResponse(user);
           return { ...safeUser, wallet };
         })
       );
@@ -960,8 +1266,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const credentials = generateClientCredentials();
+      const appData = validation.data;
       const app = await storage.createApp({
-        ...validation.data,
+        name: appData.name,
+        slug: appData.slug,
+        description: appData.description,
+        callbackUrl: appData.callbackUrl,
+        pricingModel: appData.pricingModel,
+        billingCycle: appData.billingCycle || null,
+        monthlyPriceCents: appData.monthlyPriceCents || 0,
+        yearlyPriceCents: appData.yearlyPriceCents || 0,
+        perUsePriceCents: appData.perUsePriceCents || 0,
         clientId: credentials.clientId,
         clientSecret: credentials.clientSecret,
         iconUrl: null,
@@ -1154,6 +1469,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         entityType: "transaction",
         entityId: transactionId,
         payload: JSON.stringify({ transactionId, status, simulatedAt: new Date() }),
+        processingResult: null,
         attempts: 0,
         maxAttempts: 3,
         nextRetryAt: null,
@@ -1225,7 +1541,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { runJobsManually } = await import("./background-jobs");
       const result = await runJobsManually();
 
-      await createAuditLog(req, "ADMIN_ACTION", "Manual background job run", req.user!.id, "system", null, result);
+      await createAuditLog(req, "ADMIN_ACTION", "Manual background job run", req.user!.id, "system", undefined, result);
 
       res.json({
         message: "Background jobs executed manually",

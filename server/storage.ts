@@ -10,6 +10,7 @@ import {
   refreshTokens,
   auditLogs,
   webhookEvents,
+  smsOtpCodes,
   type User,
   type InsertUser,
   type Wallet,
@@ -31,6 +32,8 @@ import {
   type InsertAuditLog,
   type WebhookEvent,
   type InsertWebhookEvent,
+  type SmsOtpCode,
+  type InsertSmsOtpCode,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -109,6 +112,12 @@ export interface IStorage {
   getPendingWebhookEvents(limit?: number): Promise<WebhookEvent[]>;
   updateWebhookEventStatus(id: string, status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "RETRYING", result?: string): Promise<WebhookEvent | undefined>;
   getWebhookEvents(limit?: number): Promise<WebhookEvent[]>;
+
+  createSmsOtp(otp: Omit<SmsOtpCode, "id" | "createdAt" | "usedAt">): Promise<SmsOtpCode>;
+  getValidSmsOtp(phone: string, purpose: string): Promise<SmsOtpCode | undefined>;
+  getRecentSmsOtp(phone: string, withinMinutes: number): Promise<SmsOtpCode | undefined>;
+  incrementSmsOtpAttempts(id: string): Promise<void>;
+  markSmsOtpUsed(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -528,6 +537,57 @@ export class DatabaseStorage implements IStorage {
       .from(webhookEvents)
       .orderBy(desc(webhookEvents.createdAt))
       .limit(limit);
+  }
+
+  async createSmsOtp(otp: Omit<SmsOtpCode, "id" | "createdAt" | "usedAt">): Promise<SmsOtpCode> {
+    const [created] = await db.insert(smsOtpCodes).values(otp).returning();
+    return created;
+  }
+
+  async getValidSmsOtp(phone: string, purpose: string): Promise<SmsOtpCode | undefined> {
+    const [otp] = await db
+      .select()
+      .from(smsOtpCodes)
+      .where(
+        and(
+          eq(smsOtpCodes.phone, phone),
+          eq(smsOtpCodes.purpose, purpose),
+          sql`${smsOtpCodes.usedAt} IS NULL`,
+          sql`${smsOtpCodes.expiresAt} > NOW()`
+        )
+      )
+      .orderBy(desc(smsOtpCodes.createdAt))
+      .limit(1);
+    return otp || undefined;
+  }
+
+  async getRecentSmsOtp(phone: string, withinMinutes: number): Promise<SmsOtpCode | undefined> {
+    const [otp] = await db
+      .select()
+      .from(smsOtpCodes)
+      .where(
+        and(
+          eq(smsOtpCodes.phone, phone),
+          sql`${smsOtpCodes.createdAt} > NOW() - INTERVAL '${sql.raw(withinMinutes.toString())} minutes'`
+        )
+      )
+      .orderBy(desc(smsOtpCodes.createdAt))
+      .limit(1);
+    return otp || undefined;
+  }
+
+  async incrementSmsOtpAttempts(id: string): Promise<void> {
+    await db
+      .update(smsOtpCodes)
+      .set({ attempts: sql`${smsOtpCodes.attempts} + 1` })
+      .where(eq(smsOtpCodes.id, id));
+  }
+
+  async markSmsOtpUsed(id: string): Promise<void> {
+    await db
+      .update(smsOtpCodes)
+      .set({ usedAt: new Date() })
+      .where(eq(smsOtpCodes.id, id));
   }
 }
 
