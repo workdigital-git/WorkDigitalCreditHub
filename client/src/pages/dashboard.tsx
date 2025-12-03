@@ -169,8 +169,8 @@ function SubscriptionItem({ subscription }: { subscription: AppSubscription & { 
           <p className="text-xs text-muted-foreground">{subscription.app.pricingModel}</p>
         </div>
       </div>
-      <Badge variant={subscription.status === "active" ? "default" : "secondary"}>
-        {subscription.status}
+      <Badge variant={subscription.status === "ACTIVE" ? "default" : "secondary"}>
+        {subscription.status.toLowerCase()}
       </Badge>
     </div>
   );
@@ -187,10 +187,10 @@ export default function DashboardPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
-              Dashboard
+              Welcome to Work Digital
             </h1>
             <p className="text-muted-foreground">
-              Overview of your credits and activity
+              Your credits power services like BigBrandForge and more
             </p>
           </div>
           <div className="flex gap-2">
@@ -229,7 +229,7 @@ export default function DashboardPage() {
             isLoading={isLoading}
           />
           <StatCard
-            title="Active Apps"
+            title="Connected Services"
             value={String(data?.stats?.activeApps || 0)}
             icon={AppWindow}
             isLoading={isLoading}
@@ -303,8 +303,8 @@ export default function DashboardPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-4">
               <div>
-                <CardTitle className="text-lg">Active Subscriptions</CardTitle>
-                <CardDescription>Connected apps</CardDescription>
+                <CardTitle className="text-lg">Connected Services</CardTitle>
+                <CardDescription>Work Digital integrations</CardDescription>
               </div>
               <Link href="/apps">
                 <Button variant="ghost" size="sm" data-testid="link-view-all-apps">
@@ -339,13 +339,13 @@ export default function DashboardPage() {
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
                     <AppWindow className="h-6 w-6 text-muted-foreground" />
                   </div>
-                  <p className="text-sm font-medium">No active apps</p>
+                  <p className="text-sm font-medium">No connected services</p>
                   <p className="text-sm text-muted-foreground">
-                    Browse available apps to connect
+                    Connect Work Digital services to get started
                   </p>
                   <Link href="/apps">
                     <Button className="mt-4" size="sm" data-testid="button-browse-apps-empty">
-                      Browse Apps
+                      Browse Services
                     </Button>
                   </Link>
                 </div>

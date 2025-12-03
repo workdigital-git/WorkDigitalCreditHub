@@ -449,18 +449,18 @@ function EmptyState({ type, searchQuery }: { type: 'connected' | 'discover' | 's
   const configs = {
     connected: {
       icon: Link2,
-      title: "No connected apps",
-      description: "Connect apps to let them use your credits. Browse available apps in the Discover tab.",
+      title: "No connected services",
+      description: "Connect Work Digital services to use your credits for AI-powered tools. Browse available services in the Discover tab.",
     },
     discover: {
       icon: Compass,
-      title: "No apps available",
-      description: "Check back later for new app integrations.",
+      title: "No services available",
+      description: "New Work Digital services will appear here. Check back soon!",
     },
     search: {
       icon: Search,
-      title: "No apps found",
-      description: `No apps match "${searchQuery}". Try a different search term.`,
+      title: "No services found",
+      description: `No services match "${searchQuery}". Try a different search term.`,
     },
   };
 
@@ -592,10 +592,10 @@ export default function AppsPage() {
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
-              App Hub
+              Work Digital Services
             </h1>
             <p className="text-muted-foreground mt-1">
-              Manage connected apps and discover new integrations
+              Connect to services that use your credits for AI-powered tools and more
             </p>
           </div>
         </div>

@@ -21,14 +21,15 @@ import {
   Menu,
   X,
   Book,
+  Building2,
 } from "lucide-react";
 import { useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/wallet", label: "Wallet & Credits", icon: Wallet },
-  { href: "/apps", label: "My Apps", icon: AppWindow },
-  { href: "/billing", label: "Billing Methods", icon: CreditCard },
+  { href: "/wallet", label: "Credits", icon: Wallet },
+  { href: "/apps", label: "Services", icon: AppWindow },
+  { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -49,11 +50,16 @@ export function Navbar() {
       <div className="container flex h-16 items-center justify-between gap-4 px-4 md:px-6">
         <Link href="/dashboard" className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
-            <Wallet className="h-4 w-4 text-primary-foreground" />
+            <Building2 className="h-4 w-4 text-primary-foreground" />
           </div>
-          <span className="hidden font-semibold tracking-tight sm:inline-block" data-testid="text-logo">
-            Credits Hub
-          </span>
+          <div className="hidden sm:flex flex-col leading-none">
+            <span className="font-semibold tracking-tight text-sm" data-testid="text-logo">
+              Work Digital
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              Credit Portal
+            </span>
+          </div>
         </Link>
 
         <nav className="hidden md:flex items-center gap-1">
