@@ -6,12 +6,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -25,12 +29,167 @@ import {
   Zap,
   Clock,
   Star,
+  AlertTriangle,
+  Shield,
+  CreditCard,
+  DollarSign,
 } from "lucide-react";
 import type { App, AppSubscription } from "@shared/schema";
 
 interface AppsData {
   availableApps: App[];
   subscriptions: (AppSubscription & { app: App })[];
+}
+
+function formatPrice(cents: number | null): string {
+  if (!cents || cents === 0) return "Free";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
+
+function AuthorizationDialog({
+  app,
+  open,
+  onOpenChange,
+  onConfirm,
+  isLoading,
+}: {
+  app: App | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+  isLoading: boolean;
+}) {
+  const [consent, setConsent] = useState(false);
+
+  if (!app) return null;
+
+  const permissions = [
+    {
+      icon: DollarSign,
+      title: "Check your credit balance",
+      description: "View your current available credits",
+    },
+    {
+      icon: CreditCard,
+      title: "Debit credits from your account",
+      description: "Charge your account for services you use",
+    },
+  ];
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => {
+      if (!v) setConsent(false);
+      onOpenChange(v);
+    }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10">
+              <AppWindow className="h-7 w-7 text-primary" />
+            </div>
+            <div>
+              <DialogTitle className="text-xl">Authorize {app.name}</DialogTitle>
+              <DialogDescription>
+                This app wants to access your account
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-medium text-amber-600 dark:text-amber-400">
+                  This app can charge credits to your account
+                </p>
+                <p className="text-muted-foreground mt-1">
+                  Review the permissions below before authorizing.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              This app will be able to:
+            </h4>
+            {permissions.map((perm, idx) => (
+              <div key={idx} className="flex items-start gap-3 pl-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted">
+                  <perm.icon className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{perm.title}</p>
+                  <p className="text-xs text-muted-foreground">{perm.description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <h4 className="text-sm font-medium">Pricing</h4>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="p-2 rounded-lg bg-muted/50">
+                <p className="text-xs text-muted-foreground">Monthly</p>
+                <p className="text-sm font-medium">{formatPrice(app.monthlyPriceCents)}</p>
+              </div>
+              <div className="p-2 rounded-lg bg-muted/50">
+                <p className="text-xs text-muted-foreground">Yearly</p>
+                <p className="text-sm font-medium">{formatPrice(app.yearlyPriceCents)}</p>
+              </div>
+              <div className="p-2 rounded-lg bg-muted/50">
+                <p className="text-xs text-muted-foreground">Per Use</p>
+                <p className="text-sm font-medium">{formatPrice(app.perUsePriceCents)}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+            <Checkbox
+              id="consent"
+              checked={consent}
+              onCheckedChange={(c) => setConsent(c === true)}
+              data-testid="checkbox-authorize-consent"
+            />
+            <Label htmlFor="consent" className="text-sm leading-relaxed cursor-pointer">
+              I understand that <span className="font-semibold">{app.name}</span> will be able to charge
+              credits from my account for services I use. I can disconnect this app at any time.
+            </Label>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={!consent || isLoading}
+            data-testid="button-confirm-authorize"
+          >
+            {isLoading ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+            )}
+            Authorize {app.name}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function AppCard({
@@ -193,6 +352,7 @@ function AppDetailsDialog({
 export default function AppsPage() {
   const [search, setSearch] = useState("");
   const [selectedApp, setSelectedApp] = useState<App | null>(null);
+  const [authorizingApp, setAuthorizingApp] = useState<App | null>(null);
   const [loadingAppId, setLoadingAppId] = useState<string | null>(null);
   const { toast } = useToast();
 
@@ -207,11 +367,12 @@ export default function AppsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/apps"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
-      toast({ title: "App connected!", description: "The app is now connected to your account." });
+      toast({ title: "App authorized!", description: "You've granted this app permission to use your credits." });
+      setAuthorizingApp(null);
     },
     onError: (error) => {
       toast({
-        title: "Failed to connect",
+        title: "Failed to authorize",
         description: error instanceof Error ? error.message : "Please try again",
         variant: "destructive",
       });
@@ -316,8 +477,7 @@ export default function AppsPage() {
                 app={app}
                 subscription={getSubscription(app.id)}
                 onSubscribe={() => {
-                  setLoadingAppId(app.id);
-                  subscribeMutation.mutate(app.id);
+                  setAuthorizingApp(app);
                 }}
                 onUnsubscribe={() => {
                   setLoadingAppId(app.id);
@@ -353,6 +513,19 @@ export default function AppsPage() {
             onOpenChange={(open) => !open && setSelectedApp(null)}
           />
         )}
+
+        <AuthorizationDialog
+          app={authorizingApp}
+          open={!!authorizingApp}
+          onOpenChange={(open) => !open && setAuthorizingApp(null)}
+          onConfirm={() => {
+            if (authorizingApp) {
+              setLoadingAppId(authorizingApp.id);
+              subscribeMutation.mutate(authorizingApp.id);
+            }
+          }}
+          isLoading={!!authorizingApp && loadingAppId === authorizingApp.id}
+        />
       </div>
     </Layout>
   );

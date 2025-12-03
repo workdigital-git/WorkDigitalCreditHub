@@ -7,6 +7,7 @@ import {
   apps,
   appSubscriptions,
   apiKeys,
+  appApiKeys,
   refreshTokens,
   auditLogs,
   webhookEvents,
@@ -29,6 +30,8 @@ import {
   type InsertAppSubscription,
   type ApiKey,
   type InsertApiKey,
+  type AppApiKey,
+  type InsertAppApiKey,
   type RefreshToken,
   type AuditLog,
   type InsertAuditLog,
@@ -96,6 +99,14 @@ export interface IStorage {
   createApiKey(key: Omit<ApiKey, "id" | "createdAt">): Promise<ApiKey>;
   deleteApiKey(id: string): Promise<boolean>;
   updateApiKeyLastUsed(id: string): Promise<void>;
+
+  getAppApiKey(id: string): Promise<AppApiKey | undefined>;
+  getAppApiKeysByAppId(appId: string): Promise<AppApiKey[]>;
+  getAppApiKeyByHash(hash: string): Promise<(AppApiKey & { app: App }) | undefined>;
+  getAllAppApiKeys(): Promise<(AppApiKey & { app: App })[]>;
+  createAppApiKey(key: Omit<AppApiKey, "id" | "createdAt" | "lastUsedAt" | "revokedAt">): Promise<AppApiKey>;
+  revokeAppApiKey(id: string): Promise<boolean>;
+  updateAppApiKeyLastUsed(id: string): Promise<void>;
 
   createRefreshToken(userId: string, tokenHash: string, expiresAt: Date): Promise<RefreshToken>;
   getRefreshTokenByHash(hash: string): Promise<RefreshToken | undefined>;
@@ -432,6 +443,61 @@ export class DatabaseStorage implements IStorage {
 
   async updateApiKeyLastUsed(id: string): Promise<void> {
     await db.update(apiKeys).set({ lastUsedAt: new Date() }).where(eq(apiKeys.id, id));
+  }
+
+  async getAppApiKey(id: string): Promise<AppApiKey | undefined> {
+    const [key] = await db.select().from(appApiKeys).where(eq(appApiKeys.id, id));
+    return key || undefined;
+  }
+
+  async getAppApiKeysByAppId(appId: string): Promise<AppApiKey[]> {
+    return db
+      .select()
+      .from(appApiKeys)
+      .where(and(eq(appApiKeys.appId, appId), sql`${appApiKeys.revokedAt} IS NULL`))
+      .orderBy(desc(appApiKeys.createdAt));
+  }
+
+  async getAppApiKeyByHash(hash: string): Promise<(AppApiKey & { app: App }) | undefined> {
+    const [result] = await db
+      .select()
+      .from(appApiKeys)
+      .innerJoin(apps, eq(appApiKeys.appId, apps.id))
+      .where(
+        and(
+          eq(appApiKeys.keyHash, hash),
+          sql`${appApiKeys.revokedAt} IS NULL`
+        )
+      );
+    if (!result) return undefined;
+    return { ...result.app_api_keys, app: result.apps };
+  }
+
+  async getAllAppApiKeys(): Promise<(AppApiKey & { app: App })[]> {
+    const result = await db
+      .select()
+      .from(appApiKeys)
+      .innerJoin(apps, eq(appApiKeys.appId, apps.id))
+      .orderBy(desc(appApiKeys.createdAt));
+    return result.map((row) => ({ ...row.app_api_keys, app: row.apps }));
+  }
+
+  async createAppApiKey(key: Omit<AppApiKey, "id" | "createdAt" | "lastUsedAt" | "revokedAt">): Promise<AppApiKey> {
+    const [created] = await db.insert(appApiKeys).values(key).returning();
+    return created;
+  }
+
+  async revokeAppApiKey(id: string): Promise<boolean> {
+    const [updated] = await db
+      .update(appApiKeys)
+      .set({ revokedAt: new Date() })
+      .where(eq(appApiKeys.id, id))
+      .returning();
+    return !!updated;
+  }
+
+  async updateAppApiKeyLastUsed(id: string): Promise<void> {
+    await db.update(appApiKeys).set({ lastUsedAt: new Date() }).where(eq(appApiKeys.id, id));
   }
 
   async createRefreshToken(userId: string, tokenHash: string, expiresAt: Date): Promise<RefreshToken> {

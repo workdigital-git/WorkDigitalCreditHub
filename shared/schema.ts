@@ -183,6 +183,19 @@ export const apiKeys = pgTable("api_keys", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const appApiKeys = pgTable("app_api_keys", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  appId: varchar("app_id", { length: 36 }).notNull().references(() => apps.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull(),
+  keyPrefix: text("key_prefix").notNull(),
+  scopes: text("scopes").array().default([]).notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const refreshTokens = pgTable("refresh_tokens", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -264,6 +277,7 @@ export const autoTopupRulesRelations = relations(autoTopupRules, ({ one }) => ({
 export const appsRelations = relations(apps, ({ many }) => ({
   subscriptions: many(appSubscriptions),
   transactions: many(walletTransactions),
+  apiKeys: many(appApiKeys),
 }));
 
 export const appSubscriptionsRelations = relations(appSubscriptions, ({ one }) => ({
@@ -273,6 +287,10 @@ export const appSubscriptionsRelations = relations(appSubscriptions, ({ one }) =
 
 export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
   user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
+}));
+
+export const appApiKeysRelations = relations(appApiKeys, ({ one }) => ({
+  app: one(apps, { fields: [appApiKeys.appId], references: [apps.id] }),
 }));
 
 export const refreshTokensRelations = relations(refreshTokens, ({ one }) => ({
@@ -365,6 +383,15 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
   lastUsedAt: true,
 });
 
+export const insertAppApiKeySchema = createInsertSchema(appApiKeys).omit({
+  id: true,
+  createdAt: true,
+  keyHash: true,
+  keyPrefix: true,
+  lastUsedAt: true,
+  revokedAt: true,
+});
+
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
   id: true,
   createdAt: true,
@@ -423,6 +450,8 @@ export type AppSubscription = typeof appSubscriptions.$inferSelect;
 export type InsertAppSubscription = z.infer<typeof insertAppSubscriptionSchema>;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
+export type AppApiKey = typeof appApiKeys.$inferSelect;
+export type InsertAppApiKey = z.infer<typeof insertAppApiKeySchema>;
 export type RefreshToken = typeof refreshTokens.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;

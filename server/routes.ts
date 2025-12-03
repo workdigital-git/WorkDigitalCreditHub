@@ -1307,6 +1307,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!wallet) {
         wallet = await storage.createWallet({
           userId,
+          currency: "USD",
           balanceCents: 0,
         });
       }
@@ -1349,6 +1350,121 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("Admin credit user error:", error);
       res.status(500).json({ message: "Failed to credit user" });
+    }
+  });
+
+  app.get("/api/admin/app-api-keys", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const keys = await storage.getAllAppApiKeys();
+      res.json(keys.map(k => ({
+        id: k.id,
+        appId: k.appId,
+        appName: k.app.name,
+        appSlug: k.app.slug,
+        name: k.name,
+        keyPrefix: k.keyPrefix,
+        scopes: k.scopes,
+        lastUsedAt: k.lastUsedAt,
+        expiresAt: k.expiresAt,
+        createdAt: k.createdAt,
+      })));
+    } catch (error) {
+      console.error("Get app API keys error:", error);
+      res.status(500).json({ message: "Failed to get app API keys" });
+    }
+  });
+
+  app.post("/api/admin/app-api-keys", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { appId, name, scopes, expiresInDays } = req.body;
+
+      if (!appId || !name) {
+        return res.status(400).json({ message: "appId and name are required" });
+      }
+
+      const app = await storage.getApp(appId);
+      if (!app) {
+        return res.status(404).json({ message: "App not found" });
+      }
+
+      const rawKey = `app_${randomBytes(32).toString("hex")}`;
+      const keyHash = hashToken(rawKey);
+      const keyPrefix = rawKey.slice(0, 12);
+
+      let expiresAt: Date | null = null;
+      if (expiresInDays && typeof expiresInDays === "number" && expiresInDays > 0) {
+        expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
+      }
+
+      const apiKey = await storage.createAppApiKey({
+        appId,
+        name,
+        keyHash,
+        keyPrefix,
+        scopes: scopes || ["balance:read", "credits:debit"],
+        expiresAt,
+      });
+
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        eventType: "ADMIN_ACTION",
+        entityType: "APP_API_KEY",
+        entityId: apiKey.id,
+        action: `Created API key "${name}" for app "${app.name}"`,
+        details: JSON.stringify({ appId, appName: app.name, keyPrefix, scopes }),
+        ipAddress: req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      res.status(201).json({
+        id: apiKey.id,
+        appId: apiKey.appId,
+        appName: app.name,
+        name: apiKey.name,
+        key: rawKey,
+        keyPrefix: apiKey.keyPrefix,
+        scopes: apiKey.scopes,
+        expiresAt: apiKey.expiresAt,
+        createdAt: apiKey.createdAt,
+        warning: "Store this API key securely. It will not be shown again.",
+      });
+    } catch (error) {
+      console.error("Create app API key error:", error);
+      res.status(500).json({ message: "Failed to create app API key" });
+    }
+  });
+
+  app.delete("/api/admin/app-api-keys/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      
+      const existingKey = await storage.getAppApiKey(id);
+      if (!existingKey) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+
+      const app = await storage.getApp(existingKey.appId);
+      
+      const success = await storage.revokeAppApiKey(id);
+      if (!success) {
+        return res.status(404).json({ message: "API key not found" });
+      }
+
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        eventType: "ADMIN_ACTION",
+        entityType: "APP_API_KEY",
+        entityId: id,
+        action: `Revoked API key "${existingKey.name}" for app "${app?.name || existingKey.appId}"`,
+        details: JSON.stringify({ appId: existingKey.appId, keyPrefix: existingKey.keyPrefix }),
+        ipAddress: req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      res.json({ message: "API key revoked successfully" });
+    } catch (error) {
+      console.error("Revoke app API key error:", error);
+      res.status(500).json({ message: "Failed to revoke API key" });
     }
   });
 
@@ -1773,6 +1889,252 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("External debit error:", error);
       res.status(500).json({ message: "Failed to process debit" });
+    }
+  });
+
+  app.post("/api/v2/balance", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "missing_api_key", message: "API key required in Authorization header" });
+      }
+
+      const key = authHeader.slice(7);
+      const keyHash = hashToken(key);
+      const appApiKey = await storage.getAppApiKeyByHash(keyHash);
+
+      if (!appApiKey) {
+        return res.status(401).json({ error: "invalid_api_key", message: "Invalid or revoked API key" });
+      }
+
+      if (appApiKey.expiresAt && appApiKey.expiresAt < new Date()) {
+        return res.status(401).json({ error: "expired_api_key", message: "API key has expired" });
+      }
+
+      if (!appApiKey.scopes.includes("balance:read")) {
+        return res.status(403).json({ error: "insufficient_scope", message: "API key does not have balance:read scope" });
+      }
+
+      await storage.updateAppApiKeyLastUsed(appApiKey.id);
+
+      const { user_email } = req.body;
+      if (!user_email) {
+        return res.status(400).json({ error: "missing_user_email", message: "user_email is required" });
+      }
+
+      const user = await storage.getUserByEmail(user_email);
+      if (!user) {
+        return res.status(404).json({ error: "user_not_found", message: "User not found" });
+      }
+
+      const subscription = await storage.getAppSubscription(user.id, appApiKey.appId);
+      if (!subscription || subscription.status !== "ACTIVE") {
+        return res.status(403).json({ 
+          error: "user_not_authorized", 
+          message: "User has not authorized this app to access their account",
+          authorization_required: true
+        });
+      }
+
+      const wallet = await storage.getWalletByUserId(user.id);
+      if (!wallet) {
+        return res.status(404).json({ error: "wallet_not_found", message: "User wallet not found" });
+      }
+
+      res.json({
+        user_email,
+        balance_cents: wallet.balanceCents,
+        currency: wallet.currency,
+        subscription_status: subscription.status,
+      });
+    } catch (error) {
+      console.error("V2 balance error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to get balance" });
+    }
+  });
+
+  app.post("/api/v2/debit", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "missing_api_key", message: "API key required in Authorization header" });
+      }
+
+      const key = authHeader.slice(7);
+      const keyHash = hashToken(key);
+      const appApiKey = await storage.getAppApiKeyByHash(keyHash);
+
+      if (!appApiKey) {
+        return res.status(401).json({ error: "invalid_api_key", message: "Invalid or revoked API key" });
+      }
+
+      if (appApiKey.expiresAt && appApiKey.expiresAt < new Date()) {
+        return res.status(401).json({ error: "expired_api_key", message: "API key has expired" });
+      }
+
+      if (!appApiKey.scopes.includes("credits:debit")) {
+        return res.status(403).json({ error: "insufficient_scope", message: "API key does not have credits:debit scope" });
+      }
+
+      await storage.updateAppApiKeyLastUsed(appApiKey.id);
+
+      const { user_email, amount_cents, description, idempotency_key } = req.body;
+
+      if (!user_email) {
+        return res.status(400).json({ error: "missing_user_email", message: "user_email is required" });
+      }
+
+      if (!amount_cents || typeof amount_cents !== "number" || amount_cents <= 0) {
+        return res.status(400).json({ error: "invalid_amount", message: "amount_cents must be a positive number" });
+      }
+
+      const user = await storage.getUserByEmail(user_email);
+      if (!user) {
+        return res.status(404).json({ error: "user_not_found", message: "User not found" });
+      }
+
+      const subscription = await storage.getAppSubscription(user.id, appApiKey.appId);
+      if (!subscription || subscription.status !== "ACTIVE") {
+        return res.status(403).json({ 
+          error: "user_not_authorized", 
+          message: "User has not authorized this app to debit credits from their account",
+          authorization_required: true
+        });
+      }
+
+      const wallet = await storage.getWalletByUserId(user.id);
+      if (!wallet) {
+        return res.status(404).json({ error: "wallet_not_found", message: "User wallet not found" });
+      }
+
+      if (wallet.balanceCents < amount_cents) {
+        return res.status(402).json({ 
+          error: "insufficient_balance", 
+          message: "User does not have sufficient credits",
+          current_balance_cents: wallet.balanceCents,
+          required_cents: amount_cents
+        });
+      }
+
+      const transaction = await storage.createTransaction({
+        walletId: wallet.id,
+        type: "DEBIT",
+        source: "APP_USAGE",
+        amountCents: amount_cents,
+        description: description || `${appApiKey.app.name} usage`,
+        status: "COMPLETED",
+        appId: appApiKey.appId,
+      });
+
+      await storage.updateWalletBalance(wallet.id, -amount_cents);
+
+      await storage.incrementSubscriptionUsage(subscription.id);
+
+      await createAuditLog(req, "WALLET_DEBIT", `App debit: ${appApiKey.app.name}`, user.id, "wallet", wallet.id, { 
+        amount_cents, 
+        transactionId: transaction.id, 
+        appId: appApiKey.appId,
+        appName: appApiKey.app.name,
+        appApiKeyId: appApiKey.id,
+        idempotency_key 
+      });
+      
+      const autoTopupResult = await checkAndExecuteAutoTopup(user.id, wallet.id);
+
+      if (autoTopupResult.triggered) {
+        await createAuditLog(req, "WALLET_AUTO_TOPUP", "Auto top-up triggered", user.id, "wallet", wallet.id, { 
+          amountCents: autoTopupResult.amountCents, 
+          transactionId: autoTopupResult.transactionId 
+        });
+      }
+
+      const finalWallet = await storage.getWallet(wallet.id);
+      const finalBalanceCents = finalWallet?.balanceCents ?? (wallet.balanceCents - amount_cents);
+
+      res.json({
+        success: true,
+        transaction_id: transaction.id,
+        amount_cents,
+        new_balance_cents: finalBalanceCents,
+        user_email,
+        app_name: appApiKey.app.name,
+        auto_topup: autoTopupResult.triggered ? {
+          triggered: true,
+          amount_cents: autoTopupResult.amountCents,
+          transaction_id: autoTopupResult.transactionId,
+          balance_after_topup: autoTopupResult.newBalance,
+        } : undefined,
+      });
+    } catch (error) {
+      console.error("V2 debit error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to process debit" });
+    }
+  });
+
+  app.post("/api/v2/check-authorization", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "missing_api_key", message: "API key required in Authorization header" });
+      }
+
+      const key = authHeader.slice(7);
+      const keyHash = hashToken(key);
+      const appApiKey = await storage.getAppApiKeyByHash(keyHash);
+
+      if (!appApiKey) {
+        return res.status(401).json({ error: "invalid_api_key", message: "Invalid or revoked API key" });
+      }
+
+      if (appApiKey.expiresAt && appApiKey.expiresAt < new Date()) {
+        return res.status(401).json({ error: "expired_api_key", message: "API key has expired" });
+      }
+
+      await storage.updateAppApiKeyLastUsed(appApiKey.id);
+
+      const { user_email } = req.body;
+      if (!user_email) {
+        return res.status(400).json({ error: "missing_user_email", message: "user_email is required" });
+      }
+
+      const user = await storage.getUserByEmail(user_email);
+      if (!user) {
+        return res.json({ 
+          authorized: false, 
+          reason: "user_not_found",
+          user_exists: false
+        });
+      }
+
+      const subscription = await storage.getAppSubscription(user.id, appApiKey.appId);
+      
+      if (!subscription) {
+        return res.json({ 
+          authorized: false, 
+          reason: "no_subscription",
+          user_exists: true
+        });
+      }
+
+      if (subscription.status !== "ACTIVE") {
+        return res.json({ 
+          authorized: false, 
+          reason: "subscription_not_active",
+          user_exists: true,
+          subscription_status: subscription.status
+        });
+      }
+
+      res.json({ 
+        authorized: true,
+        user_exists: true,
+        subscription_status: subscription.status,
+        subscribed_at: subscription.subscribedAt,
+        billing_cycle: subscription.billingCycle
+      });
+    } catch (error) {
+      console.error("V2 check-authorization error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to check authorization" });
     }
   });
 

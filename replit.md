@@ -62,9 +62,10 @@ This is a **standalone membership + billing platform** that other apps can plug 
 4. **WalletTransaction** - CREDIT/DEBIT transaction history
 5. **AutoTopupRule** - Auto-topup configuration when balance is low
 6. **App** - Registered apps that use this platform
-7. **AppSubscription** - User subscriptions to apps
-8. **ApiKey** - API keys for programmatic access
-9. **RefreshToken** - JWT refresh token storage
+7. **AppSubscription** - User subscriptions to apps (authorization for apps to use credits)
+8. **ApiKey** - User API keys for programmatic access
+9. **AppApiKey** - App-level API keys issued by admins for B2B integrations
+10. **RefreshToken** - JWT refresh token storage
 
 ## API Routes
 
@@ -109,11 +110,20 @@ This is a **standalone membership + billing platform** that other apps can plug 
 - `GET /api/admin/apps` - List all apps
 - `POST /api/admin/apps` - Register new app
 - `POST /api/admin/credit-user` - Manually credit a user's wallet
+- `GET /api/admin/app-api-keys` - List all app API keys
+- `POST /api/admin/app-api-keys` - Generate new app API key
+- `DELETE /api/admin/app-api-keys/:id` - Revoke app API key
 
-### External API (for integrated apps)
-- `POST /api/external/balance` - Check user balance (API key auth)
-- `POST /api/external/debit` - Debit credits (API key auth)
+### External API (Legacy - for user's own API keys)
+- `POST /api/external/balance` - Check own balance (user API key auth)
+- `POST /api/external/debit` - Debit own credits (user API key auth)
 - `POST /api/sso/authorize` - Legacy SSO authorization endpoint
+
+### B2B Integration API v2 (for integrated apps)
+Apps use their admin-issued API keys to access authorized users' credits:
+- `POST /api/v2/balance` - Check authorized user's balance (app API key auth)
+- `POST /api/v2/debit` - Debit authorized user's credits (app API key auth)
+- `POST /api/v2/check-authorization` - Check if user authorized this app
 
 ### OAuth2 / OpenID Connect
 - `GET /api/oauth/authorize` - OAuth2 authorization endpoint (requires auth, PKCE required)

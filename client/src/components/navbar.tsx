@@ -20,6 +20,7 @@ import {
   LogOut,
   Menu,
   X,
+  Book,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -125,6 +126,12 @@ export function Navbar() {
                 <DropdownMenuItem className="cursor-pointer" data-testid="menu-settings">
                   <Settings className="mr-2 h-4 w-4" />
                   Settings
+                </DropdownMenuItem>
+              </Link>
+              <Link href="/api-docs">
+                <DropdownMenuItem className="cursor-pointer" data-testid="menu-api-docs">
+                  <Book className="mr-2 h-4 w-4" />
+                  API Docs
                 </DropdownMenuItem>
               </Link>
               <DropdownMenuSeparator />
