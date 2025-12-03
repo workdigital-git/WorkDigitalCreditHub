@@ -47,6 +47,7 @@ import {
   Check,
   Loader2,
   Eye,
+  DollarSign,
 } from "lucide-react";
 import type { User, App, Wallet } from "@shared/schema";
 
@@ -102,11 +103,53 @@ function StatsCards({ stats, isLoading }: { stats?: AdminStats; isLoading: boole
 }
 
 function UsersTab() {
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [creditDialogOpen, setCreditDialogOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserWithWallet | null>(null);
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditReason, setCreditReason] = useState("");
 
   const { data: users, isLoading } = useQuery<UserWithWallet[]>({
     queryKey: ["/api/admin/users"],
   });
+
+  const creditMutation = useMutation({
+    mutationFn: async () => {
+      const amountCents = Math.round(parseFloat(creditAmount) * 100);
+      return apiRequest("POST", "/api/admin/credit-user", {
+        userId: selectedUser?.id,
+        amountCents,
+        reason: creditReason || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
+      toast({
+        title: "Credits added",
+        description: `Successfully credited $${creditAmount} to ${selectedUser?.email}`,
+      });
+      setCreditDialogOpen(false);
+      setSelectedUser(null);
+      setCreditAmount("");
+      setCreditReason("");
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to credit user",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleOpenCreditDialog = (user: UserWithWallet) => {
+    setSelectedUser(user);
+    setCreditAmount("");
+    setCreditReason("");
+    setCreditDialogOpen(true);
+  };
 
   const filteredUsers = users?.filter(
     (user) =>
@@ -114,94 +157,165 @@ function UsersTab() {
       user.fullName?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const isValidAmount = creditAmount && parseFloat(creditAmount) > 0;
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-4">
-        <div>
-          <CardTitle>Users</CardTitle>
-          <CardDescription>Manage platform users</CardDescription>
-        </div>
-        <div className="relative w-64">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search users..."
-            className="pl-9"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            data-testid="input-search-users"
-          />
-        </div>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <div>
+            <CardTitle>Users</CardTitle>
+            <CardDescription>Manage platform users</CardDescription>
           </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>User</TableHead>
-                <TableHead>Balance</TableHead>
-                <TableHead>2FA</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Joined</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredUsers?.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell>
-                    <div>
-                      <p className="font-medium" data-testid={`user-email-${user.id}`}>
-                        {user.email}
-                      </p>
-                      {user.fullName && (
-                        <p className="text-sm text-muted-foreground">{user.fullName}</p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="tabular-nums">
-                    {formatCurrency(user.wallet?.balanceCents ?? 0)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={user.twoFactorEnabled ? "default" : "secondary"}>
-                      {user.twoFactorEnabled ? "Enabled" : "Disabled"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={user.isAdmin ? "default" : "outline"}>
-                      {user.isAdmin ? (
-                        <>
-                          <Shield className="h-3 w-3 mr-1" />
-                          Admin
-                        </>
-                      ) : (
-                        "User"
-                      )}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {new Intl.DateTimeFormat("en-US", {
-                      dateStyle: "medium",
-                    }).format(new Date(user.createdAt))}
-                  </TableCell>
-                </TableRow>
+          <div className="relative w-64">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search users..."
+              className="pl-9"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              data-testid="input-search-users"
+            />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-3">
+              {[...Array(5)].map((_, i) => (
+                <Skeleton key={i} className="h-12 w-full" />
               ))}
-              {filteredUsers?.length === 0 && (
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                    No users found
-                  </TableCell>
+                  <TableHead>User</TableHead>
+                  <TableHead>Balance</TableHead>
+                  <TableHead>2FA</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Joined</TableHead>
+                  <TableHead>Actions</TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+              </TableHeader>
+              <TableBody>
+                {filteredUsers?.map((user) => (
+                  <TableRow key={user.id}>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium" data-testid={`user-email-${user.id}`}>
+                          {user.email}
+                        </p>
+                        {user.fullName && (
+                          <p className="text-sm text-muted-foreground">{user.fullName}</p>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      {formatCurrency(user.wallet?.balanceCents ?? 0)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={user.twoFactorEnabled ? "default" : "secondary"}>
+                        {user.twoFactorEnabled ? "Enabled" : "Disabled"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={user.isAdmin ? "default" : "outline"}>
+                        {user.isAdmin ? (
+                          <>
+                            <Shield className="h-3 w-3 mr-1" />
+                            Admin
+                          </>
+                        ) : (
+                          "User"
+                        )}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {new Intl.DateTimeFormat("en-US", {
+                        dateStyle: "medium",
+                      }).format(new Date(user.createdAt))}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleOpenCreditDialog(user)}
+                        data-testid={`button-credit-user-${user.id}`}
+                      >
+                        <DollarSign className="h-4 w-4 mr-1" />
+                        Credit
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {filteredUsers?.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      No users found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={creditDialogOpen} onOpenChange={setCreditDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Credit User Account</DialogTitle>
+            <DialogDescription>
+              Add credits directly to {selectedUser?.email}'s wallet. This bypasses payment processing.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Current Balance</Label>
+              <p className="text-lg font-semibold tabular-nums">
+                {formatCurrency(selectedUser?.wallet?.balanceCents ?? 0)}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="credit-amount">Amount to Credit (USD)</Label>
+              <div className="relative">
+                <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="credit-amount"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="0.00"
+                  className="pl-9"
+                  value={creditAmount}
+                  onChange={(e) => setCreditAmount(e.target.value)}
+                  data-testid="input-credit-amount"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="credit-reason">Reason (Optional)</Label>
+              <Textarea
+                id="credit-reason"
+                placeholder="e.g., Promotional credit, Refund, Customer support..."
+                value={creditReason}
+                onChange={(e) => setCreditReason(e.target.value)}
+                data-testid="input-credit-reason"
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => creditMutation.mutate()}
+              disabled={!isValidAmount || creditMutation.isPending}
+              data-testid="button-confirm-credit"
+            >
+              {creditMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Credit ${creditAmount || "0.00"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

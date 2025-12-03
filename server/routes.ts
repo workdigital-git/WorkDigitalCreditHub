@@ -1290,6 +1290,68 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.post("/api/admin/credit-user", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { userId, amountCents, reason } = req.body;
+
+      if (!userId || typeof amountCents !== "number" || amountCents <= 0) {
+        return res.status(400).json({ message: "userId and positive amountCents are required" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      let wallet = await storage.getWalletByUserId(userId);
+      if (!wallet) {
+        wallet = await storage.createWallet({
+          userId,
+          balanceCents: 0,
+        });
+      }
+
+      await storage.updateWalletBalance(wallet.id, amountCents);
+
+      const transaction = await storage.createTransaction({
+        walletId: wallet.id,
+        type: "CREDIT",
+        source: "ADMIN_ADJUSTMENT",
+        amountCents,
+        description: reason || "Admin credit",
+        status: "COMPLETED",
+        appId: null,
+      });
+
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        eventType: "ADMIN_ACTION",
+        entityType: "WALLET",
+        entityId: wallet.id,
+        action: `Admin credited ${amountCents / 100} USD to user ${user.email}`,
+        details: JSON.stringify({ 
+          targetUserId: userId, 
+          amountCents, 
+          reason: reason || "Admin credit",
+          transactionId: transaction.id 
+        }),
+        ipAddress: req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      const updatedWallet = await storage.getWalletByUserId(userId);
+
+      res.json({
+        message: "Credits added successfully",
+        transaction,
+        newBalance: updatedWallet?.balanceCents ?? 0,
+      });
+    } catch (error) {
+      console.error("Admin credit user error:", error);
+      res.status(500).json({ message: "Failed to credit user" });
+    }
+  });
+
   app.get("/api/oauth/authorize", authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { 
