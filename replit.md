@@ -112,7 +112,14 @@ This is a **standalone membership + billing platform** that other apps can plug 
 ### External API (for integrated apps)
 - `POST /api/external/balance` - Check user balance (API key auth)
 - `POST /api/external/debit` - Debit credits (API key auth)
-- `POST /api/sso/authorize` - SSO authorization endpoint
+- `POST /api/sso/authorize` - Legacy SSO authorization endpoint
+
+### OAuth2 / OpenID Connect
+- `GET /api/oauth/authorize` - OAuth2 authorization endpoint (requires auth, PKCE required)
+- `POST /api/oauth/token` - Token exchange endpoint
+- `POST /api/oauth/introspect` - Token introspection endpoint
+- `POST /api/oauth/revoke` - Token revocation endpoint
+- `GET /api/oauth/userinfo` - OpenID Connect userinfo endpoint
 
 ## Development
 
@@ -135,7 +142,9 @@ npm run dev
 ## Features
 
 - JWT-based authentication with access/refresh tokens
-- Two-Factor Authentication (TOTP) with QR code setup
+- Two-Factor Authentication with dual methods:
+  - **TOTP** - Authenticator app (Google Authenticator, Authy, etc.)
+  - **SMS** - Via Plivo integration with verified phone numbers
 - Wallet management with transaction history
 - Multiple payment method types
 - Auto-topup rules for automatic balance top-ups (triggers when balance falls below threshold after debit)
@@ -246,6 +255,40 @@ Recurring billing for app subscriptions:
 - Blue primary color scheme
 - Subtle shadows and borders for card elements
 
+## SMS 2FA System
+
+Dual-method two-factor authentication with Plivo SMS integration:
+
+**Phone Verification Flow:**
+1. User adds phone number via `/api/user/phone/add`
+2. Phone is normalized to E.164 format (+1XXXXXXXXXX)
+3. OTP is sent via Plivo SMS
+4. User verifies with code via `/api/user/phone/verify`
+5. Once verified, user can switch 2FA method to SMS
+
+**API Endpoints:**
+- `POST /api/user/phone/add` - Add and verify phone number
+- `POST /api/user/phone/verify` - Verify phone with OTP code
+- `POST /api/user/phone/resend` - Resend phone verification OTP
+- `GET /api/user/2fa/sms/status` - Get SMS 2FA status
+- `POST /api/user/2fa/sms/setup` - Enable SMS as 2FA method
+- `POST /api/user/2fa/method` - Switch between TOTP and SMS
+- `POST /api/auth/2fa/resend-sms` - Resend login SMS OTP
+
+**Security Features:**
+- Phone numbers stored in E.164 format
+- OTP codes only stored after successful SMS delivery
+- Rate limiting on SMS sends (1 min cooldown)
+- 5-minute OTP expiration
+- Login blocks when 2FA is enabled but misconfigured
+- Phone masked in responses until verified
+
+**Environment Variables:**
+- `PLIVO_AUTH_ID` - Plivo account ID
+- `PLIVO_AUTH_TOKEN` - Plivo auth token
+- `PLIVO_PHONE_NUMBER` - Plivo sender phone number
+
 ## Integration Notes
 
 - **Stripe Integration**: User chose to skip Stripe integration (dismissed connector setup on 2025-12-03). Currently using simulated payment processing. To enable real payments in the future, user can provide STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY secrets.
+- **Plivo SMS Integration**: SMS 2FA requires Plivo credentials. Set PLIVO_AUTH_ID, PLIVO_AUTH_TOKEN, and PLIVO_PHONE_NUMBER secrets to enable.

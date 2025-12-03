@@ -11,6 +11,8 @@ import {
   auditLogs,
   webhookEvents,
   smsOtpCodes,
+  oauthAuthorizationCodes,
+  oauthAccessTokens,
   type User,
   type InsertUser,
   type Wallet,
@@ -34,6 +36,10 @@ import {
   type InsertWebhookEvent,
   type SmsOtpCode,
   type InsertSmsOtpCode,
+  type OauthAuthorizationCode,
+  type InsertOauthAuthorizationCode,
+  type OauthAccessToken,
+  type InsertOauthAccessToken,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -118,6 +124,17 @@ export interface IStorage {
   getRecentSmsOtp(phone: string, withinMinutes: number): Promise<SmsOtpCode | undefined>;
   incrementSmsOtpAttempts(id: string): Promise<void>;
   markSmsOtpUsed(id: string): Promise<void>;
+
+  createOauthAuthorizationCode(code: Omit<OauthAuthorizationCode, "id" | "createdAt" | "usedAt">): Promise<OauthAuthorizationCode>;
+  getOauthAuthorizationCode(code: string): Promise<OauthAuthorizationCode | undefined>;
+  markOauthCodeUsed(id: string): Promise<boolean>;
+  deleteExpiredAuthorizationCodes(): Promise<void>;
+
+  createOauthAccessToken(token: Omit<OauthAccessToken, "id" | "createdAt" | "revokedAt">): Promise<OauthAccessToken>;
+  getOauthAccessTokenByHash(tokenHash: string): Promise<OauthAccessToken | undefined>;
+  revokeOauthAccessToken(id: string): Promise<void>;
+  revokeOauthAccessTokensByUserId(userId: string, appId?: string): Promise<void>;
+  deleteExpiredAccessTokens(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -588,6 +605,83 @@ export class DatabaseStorage implements IStorage {
       .update(smsOtpCodes)
       .set({ usedAt: new Date() })
       .where(eq(smsOtpCodes.id, id));
+  }
+
+  async createOauthAuthorizationCode(code: Omit<OauthAuthorizationCode, "id" | "createdAt" | "usedAt">): Promise<OauthAuthorizationCode> {
+    const [created] = await db.insert(oauthAuthorizationCodes).values(code).returning();
+    return created;
+  }
+
+  async getOauthAuthorizationCode(code: string): Promise<OauthAuthorizationCode | undefined> {
+    const [authCode] = await db
+      .select()
+      .from(oauthAuthorizationCodes)
+      .where(eq(oauthAuthorizationCodes.code, code));
+    return authCode || undefined;
+  }
+
+  async markOauthCodeUsed(id: string): Promise<boolean> {
+    const result = await db
+      .update(oauthAuthorizationCodes)
+      .set({ usedAt: new Date() })
+      .where(and(
+        eq(oauthAuthorizationCodes.id, id),
+        sql`${oauthAuthorizationCodes.usedAt} IS NULL`
+      ))
+      .returning({ id: oauthAuthorizationCodes.id });
+    return result.length > 0;
+  }
+
+  async deleteExpiredAuthorizationCodes(): Promise<void> {
+    await db
+      .delete(oauthAuthorizationCodes)
+      .where(sql`${oauthAuthorizationCodes.expiresAt} < NOW()`);
+  }
+
+  async createOauthAccessToken(token: Omit<OauthAccessToken, "id" | "createdAt" | "revokedAt">): Promise<OauthAccessToken> {
+    const [created] = await db.insert(oauthAccessTokens).values(token).returning();
+    return created;
+  }
+
+  async getOauthAccessTokenByHash(tokenHash: string): Promise<OauthAccessToken | undefined> {
+    const [token] = await db
+      .select()
+      .from(oauthAccessTokens)
+      .where(
+        and(
+          eq(oauthAccessTokens.tokenHash, tokenHash),
+          sql`${oauthAccessTokens.revokedAt} IS NULL`,
+          sql`${oauthAccessTokens.expiresAt} > NOW()`
+        )
+      );
+    return token || undefined;
+  }
+
+  async revokeOauthAccessToken(id: string): Promise<void> {
+    await db
+      .update(oauthAccessTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(oauthAccessTokens.id, id));
+  }
+
+  async revokeOauthAccessTokensByUserId(userId: string, appId?: string): Promise<void> {
+    if (appId) {
+      await db
+        .update(oauthAccessTokens)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(oauthAccessTokens.userId, userId), eq(oauthAccessTokens.appId, appId)));
+    } else {
+      await db
+        .update(oauthAccessTokens)
+        .set({ revokedAt: new Date() })
+        .where(eq(oauthAccessTokens.userId, userId));
+    }
+  }
+
+  async deleteExpiredAccessTokens(): Promise<void> {
+    await db
+      .delete(oauthAccessTokens)
+      .where(sql`${oauthAccessTokens.expiresAt} < NOW()`);
   }
 }
 

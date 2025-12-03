@@ -1290,31 +1290,313 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.post("/api/sso/authorize", async (req, res) => {
+  app.get("/api/oauth/authorize", authMiddleware, async (req: AuthRequest, res) => {
     try {
-      const { clientId, redirectUri, userId } = req.body;
+      const { 
+        client_id, 
+        redirect_uri, 
+        response_type, 
+        scope, 
+        state, 
+        code_challenge, 
+        code_challenge_method 
+      } = req.query as {
+        client_id?: string;
+        redirect_uri?: string;
+        response_type?: string;
+        scope?: string;
+        state?: string;
+        code_challenge?: string;
+        code_challenge_method?: string;
+      };
 
-      const app = await storage.getAppByClientId(clientId);
-      if (!app) {
+      if (!client_id || !redirect_uri) {
+        return res.status(400).json({ error: "invalid_request", error_description: "client_id and redirect_uri are required" });
+      }
+
+      if (response_type !== "code") {
+        return res.status(400).json({ error: "unsupported_response_type", error_description: "Only response_type=code is supported" });
+      }
+
+      const appRecord = await storage.getAppByClientId(client_id);
+      if (!appRecord) {
+        return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id" });
+      }
+
+      if (redirect_uri !== appRecord.callbackUrl) {
+        return res.status(400).json({ error: "invalid_redirect_uri", error_description: "Redirect URI does not match registered callback" });
+      }
+
+      if (!code_challenge) {
+        return res.status(400).json({ error: "invalid_request", error_description: "PKCE code_challenge is required for security" });
+      }
+
+      if (code_challenge_method !== "S256") {
+        return res.status(400).json({ error: "invalid_request", error_description: "code_challenge_method must be S256" });
+      }
+
+      const authCode = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      await storage.createOauthAuthorizationCode({
+        code: authCode,
+        userId: req.user!.id,
+        appId: appRecord.id,
+        redirectUri: redirect_uri,
+        codeChallenge: code_challenge || null,
+        codeChallengeMethod: code_challenge_method || null,
+        scope: scope || null,
+        state: state || null,
+        expiresAt,
+      });
+
+      const redirectUrl = new URL(redirect_uri);
+      redirectUrl.searchParams.append("code", authCode);
+      if (state) {
+        redirectUrl.searchParams.append("state", state);
+      }
+
+      const response: { redirect_uri: string; code: string; state?: string } = { 
+        redirect_uri: redirectUrl.toString(),
+        code: authCode,
+      };
+      if (state) {
+        response.state = state;
+      }
+      res.json(response);
+    } catch (error) {
+      console.error("OAuth authorize error:", error);
+      res.status(500).json({ error: "server_error", error_description: "Authorization failed" });
+    }
+  });
+
+  app.post("/api/oauth/token", async (req, res) => {
+    try {
+      const { grant_type, code, redirect_uri, client_id, client_secret, code_verifier } = req.body;
+
+      if (grant_type !== "authorization_code") {
+        return res.status(400).json({ error: "unsupported_grant_type", error_description: "Only authorization_code grant is supported" });
+      }
+
+      if (!code || !redirect_uri || !client_id) {
+        return res.status(400).json({ error: "invalid_request", error_description: "code, redirect_uri, and client_id are required" });
+      }
+
+      const appRecord = await storage.getAppByClientId(client_id);
+      if (!appRecord) {
+        return res.status(401).json({ error: "invalid_client", error_description: "Unknown client_id" });
+      }
+
+      if (appRecord.clientSecret && appRecord.clientSecret !== client_secret) {
+        return res.status(401).json({ error: "invalid_client", error_description: "Client authentication failed" });
+      }
+
+      const authCode = await storage.getOauthAuthorizationCode(code);
+      if (!authCode) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "Invalid authorization code" });
+      }
+
+      const wasMarkedUsed = await storage.markOauthCodeUsed(authCode.id);
+      if (!wasMarkedUsed) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code already used" });
+      }
+
+      if (authCode.expiresAt < new Date()) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code expired" });
+      }
+
+      if (authCode.appId !== appRecord.id) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code was not issued for this client" });
+      }
+
+      if (authCode.redirectUri !== redirect_uri) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "Redirect URI mismatch" });
+      }
+
+      if (!authCode.codeChallenge) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code missing PKCE challenge" });
+      }
+
+      if (!code_verifier) {
+        return res.status(400).json({ error: "invalid_request", error_description: "code_verifier is required" });
+      }
+
+      const expectedChallenge = createHash("sha256")
+        .update(code_verifier)
+        .digest("base64url");
+
+      if (authCode.codeChallenge !== expectedChallenge) {
+        return res.status(400).json({ error: "invalid_grant", error_description: "PKCE code_verifier mismatch" });
+      }
+
+      const accessToken = randomBytes(32).toString("hex");
+      const accessTokenHash = hashToken(accessToken);
+      const accessTokenExpiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+      await storage.createOauthAccessToken({
+        tokenHash: accessTokenHash,
+        userId: authCode.userId,
+        appId: appRecord.id,
+        scope: authCode.scope,
+        expiresAt: accessTokenExpiresAt,
+      });
+
+      const user = await storage.getUser(authCode.userId);
+
+      res.json({
+        access_token: accessToken,
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope: authCode.scope || null,
+        user: user ? {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+        } : null,
+      });
+    } catch (error) {
+      console.error("OAuth token error:", error);
+      res.status(500).json({ error: "server_error", error_description: "Token exchange failed" });
+    }
+  });
+
+  app.post("/api/oauth/introspect", async (req, res) => {
+    try {
+      const { token, client_id, client_secret } = req.body;
+
+      if (!token) {
+        return res.json({ active: false });
+      }
+
+      if (client_id && client_secret) {
+        const appRecord = await storage.getAppByClientId(client_id);
+        if (!appRecord || appRecord.clientSecret !== client_secret) {
+          return res.status(401).json({ error: "invalid_client", error_description: "Invalid client credentials" });
+        }
+      }
+
+      const tokenHash = hashToken(token);
+      const accessToken = await storage.getOauthAccessTokenByHash(tokenHash);
+
+      if (!accessToken) {
+        return res.json({ active: false });
+      }
+
+      const user = await storage.getUser(accessToken.userId);
+      const appRecord = await storage.getApp(accessToken.appId);
+
+      res.json({
+        active: true,
+        scope: accessToken.scope || null,
+        client_id: appRecord?.clientId || null,
+        username: user?.email || null,
+        token_type: "Bearer",
+        exp: Math.floor(accessToken.expiresAt.getTime() / 1000),
+        iat: Math.floor(accessToken.createdAt!.getTime() / 1000),
+        sub: accessToken.userId,
+        aud: accessToken.appId,
+        iss: "credits-hub",
+      });
+    } catch (error) {
+      console.error("OAuth introspect error:", error);
+      res.json({ active: false });
+    }
+  });
+
+  app.post("/api/oauth/revoke", async (req, res) => {
+    try {
+      const { token, client_id, client_secret } = req.body;
+
+      if (!token) {
+        return res.status(200).send();
+      }
+
+      if (client_id && client_secret) {
+        const appRecord = await storage.getAppByClientId(client_id);
+        if (!appRecord || appRecord.clientSecret !== client_secret) {
+          return res.status(401).json({ error: "invalid_client", error_description: "Invalid client credentials" });
+        }
+      }
+
+      const tokenHash = hashToken(token);
+      const accessToken = await storage.getOauthAccessTokenByHash(tokenHash);
+
+      if (accessToken) {
+        await storage.revokeOauthAccessToken(accessToken.id);
+      }
+
+      res.status(200).send();
+    } catch (error) {
+      console.error("OAuth revoke error:", error);
+      res.status(200).send();
+    }
+  });
+
+  app.get("/api/oauth/userinfo", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "invalid_token", error_description: "Bearer token required" });
+      }
+
+      const token = authHeader.slice(7);
+      const tokenHash = hashToken(token);
+      const accessToken = await storage.getOauthAccessTokenByHash(tokenHash);
+
+      if (!accessToken) {
+        return res.status(401).json({ error: "invalid_token", error_description: "Token is invalid or expired" });
+      }
+
+      const user = await storage.getUser(accessToken.userId);
+      if (!user) {
+        return res.status(401).json({ error: "invalid_token", error_description: "User not found" });
+      }
+
+      res.json({
+        sub: user.id,
+        email: user.email,
+        email_verified: true,
+        name: user.fullName,
+        updated_at: Math.floor(user.updatedAt!.getTime() / 1000),
+      });
+    } catch (error) {
+      console.error("OAuth userinfo error:", error);
+      res.status(500).json({ error: "server_error", error_description: "Failed to get user info" });
+    }
+  });
+
+  app.post("/api/sso/authorize", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { clientId, redirectUri } = req.body;
+
+      const appRecord = await storage.getAppByClientId(clientId);
+      if (!appRecord) {
         return res.status(404).json({ message: "App not found" });
       }
 
-      if (!app.callbackUrl.startsWith(redirectUri)) {
+      if (!appRecord.callbackUrl.startsWith(redirectUri)) {
         return res.status(400).json({ message: "Invalid redirect URI" });
       }
 
-      const user = await storage.getUser(userId);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
+      const authCode = randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      const token = jwt.sign(
-        { userId: user.id, email: user.email, appId: app.id },
-        JWT_SECRET,
-        { expiresIn: "5m" }
-      );
+      await storage.createOauthAuthorizationCode({
+        code: authCode,
+        userId: req.user!.id,
+        appId: appRecord.id,
+        redirectUri: redirectUri,
+        codeChallenge: null,
+        codeChallengeMethod: null,
+        scope: null,
+        state: null,
+        expiresAt,
+      });
 
-      res.json({ token, redirectUrl: `${redirectUri}?token=${token}` });
+      res.json({ 
+        code: authCode, 
+        redirectUrl: `${redirectUri}?code=${authCode}` 
+      });
     } catch (error) {
       console.error("SSO authorize error:", error);
       res.status(500).json({ message: "SSO authorization failed" });

@@ -204,6 +204,32 @@ export const smsOtpCodes = pgTable("sms_otp_codes", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const oauthAuthorizationCodes = pgTable("oauth_authorization_codes", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  appId: varchar("app_id", { length: 36 }).notNull().references(() => apps.id, { onDelete: "cascade" }),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge"),
+  codeChallengeMethod: text("code_challenge_method"),
+  scope: text("scope"),
+  state: text("state"),
+  usedAt: timestamp("used_at"),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const oauthAccessTokens = pgTable("oauth_access_tokens", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  tokenHash: text("token_hash").notNull().unique(),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  appId: varchar("app_id", { length: 36 }).notNull().references(() => apps.id, { onDelete: "cascade" }),
+  scope: text("scope"),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const usersRelations = relations(users, ({ one, many }) => ({
   wallet: one(wallets, { fields: [users.id], references: [wallets.userId] }),
   paymentMethods: many(paymentMethods),
@@ -263,6 +289,16 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
 
 export const webhookEventsRelations = relations(webhookEvents, ({ one }) => ({
   user: one(users, { fields: [webhookEvents.userId], references: [users.id] }),
+}));
+
+export const oauthAuthorizationCodesRelations = relations(oauthAuthorizationCodes, ({ one }) => ({
+  user: one(users, { fields: [oauthAuthorizationCodes.userId], references: [users.id] }),
+  app: one(apps, { fields: [oauthAuthorizationCodes.appId], references: [apps.id] }),
+}));
+
+export const oauthAccessTokensRelations = relations(oauthAccessTokens, ({ one }) => ({
+  user: one(users, { fields: [oauthAccessTokens.userId], references: [users.id] }),
+  app: one(apps, { fields: [oauthAccessTokens.appId], references: [apps.id] }),
 }));
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -346,6 +382,18 @@ export const insertSmsOtpCodeSchema = createInsertSchema(smsOtpCodes).omit({
   usedAt: true,
 });
 
+export const insertOauthAuthorizationCodeSchema = createInsertSchema(oauthAuthorizationCodes).omit({
+  id: true,
+  createdAt: true,
+  usedAt: true,
+});
+
+export const insertOauthAccessTokenSchema = createInsertSchema(oauthAccessTokens).omit({
+  id: true,
+  createdAt: true,
+  revokedAt: true,
+});
+
 export const fundWalletSchema = z.object({
   amountCents: z.number().min(100, "Minimum amount is $1.00"),
   paymentMethodId: z.string().uuid(),
@@ -382,3 +430,7 @@ export type WebhookEvent = typeof webhookEvents.$inferSelect;
 export type InsertWebhookEvent = z.infer<typeof insertWebhookEventSchema>;
 export type SmsOtpCode = typeof smsOtpCodes.$inferSelect;
 export type InsertSmsOtpCode = z.infer<typeof insertSmsOtpCodeSchema>;
+export type OauthAuthorizationCode = typeof oauthAuthorizationCodes.$inferSelect;
+export type InsertOauthAuthorizationCode = z.infer<typeof insertOauthAuthorizationCodeSchema>;
+export type OauthAccessToken = typeof oauthAccessTokens.$inferSelect;
+export type InsertOauthAccessToken = z.infer<typeof insertOauthAccessTokenSchema>;
