@@ -35,7 +35,9 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Redirect } from "wouter";
+import { Redirect, Link } from "wouter";
+import { Separator } from "@/components/ui/separator";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Users,
   AppWindow,
@@ -51,6 +53,11 @@ import {
   Key,
   Trash2,
   AlertTriangle,
+  BookOpen,
+  Code,
+  ExternalLink,
+  Terminal,
+  ArrowRight,
 } from "lucide-react";
 import type { User, App, Wallet } from "@shared/schema";
 
@@ -628,6 +635,781 @@ function AppsTab() {
   );
 }
 
+function CodeBlock({ code, language = "javascript", testId }: { code: string; language?: string; testId?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyToClipboard = async () => {
+    await navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative">
+      <pre className="p-4 rounded-lg bg-muted/50 border overflow-x-auto text-sm" data-testid={testId ? `code-${testId}` : undefined}>
+        <code className={`language-${language}`}>{code}</code>
+      </pre>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="absolute top-2 right-2"
+        onClick={copyToClipboard}
+        data-testid={testId ? `button-copy-${testId}` : "button-copy-code"}
+      >
+        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+      </Button>
+    </div>
+  );
+}
+
+function IntegrationGuideTab() {
+  const { toast } = useToast();
+  const [selectedAppId, setSelectedAppId] = useState<string>("");
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const { data: apps, isLoading } = useQuery<App[]>({
+    queryKey: ["/api/admin/apps"],
+  });
+
+  const selectedApp = apps?.find((app) => app.id === selectedAppId);
+  const baseUrl = typeof window !== "undefined" ? window.location.origin : "https://your-domain.com";
+
+  const copyToClipboard = async (text: string, field: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    toast({ title: "Copied to clipboard" });
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const getNodeJsExample = (app: App) => `// Work Digital SSO Integration - ${app.name}
+// Install: npm install crypto
+
+const crypto = require('crypto');
+
+// Configuration
+const CLIENT_ID = '${app.clientId}';
+const CLIENT_SECRET = '${app.clientSecret}';
+const REDIRECT_URI = '${app.callbackUrl}';
+const AUTH_BASE_URL = '${baseUrl}';
+
+// Generate PKCE codes
+function generatePKCE() {
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto
+    .createHash('sha256')
+    .update(verifier)
+    .digest('base64url');
+  return { verifier, challenge };
+}
+
+// Step 1: Redirect user to authorization
+function getAuthorizationUrl(state) {
+  const { verifier, challenge } = generatePKCE();
+  // Store verifier in session for later use
+  
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI,
+    response_type: 'code',
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    scope: 'openid profile credits',
+    state: state,
+  });
+  
+  return {
+    url: \`\${AUTH_BASE_URL}/oauth/authorize?\${params}\`,
+    verifier, // Store this in session
+  };
+}
+
+// Step 2: Exchange code for tokens
+async function exchangeCodeForToken(code, codeVerifier) {
+  const response = await fetch(\`\${AUTH_BASE_URL}/api/oauth/token\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      code_verifier: codeVerifier,
+    }),
+  });
+  
+  if (!response.ok) {
+    throw new Error('Token exchange failed');
+  }
+  
+  return response.json();
+  // Returns: { access_token, token_type, expires_in, user: { id, email, fullName } }
+}
+
+// Example Express.js callback handler
+app.get('/auth/callback', async (req, res) => {
+  const { code, state } = req.query;
+  const codeVerifier = req.session.codeVerifier; // Retrieve stored verifier
+  
+  try {
+    const tokens = await exchangeCodeForToken(code, codeVerifier);
+    req.session.user = tokens.user;
+    req.session.accessToken = tokens.access_token;
+    res.redirect('/dashboard');
+  } catch (error) {
+    res.redirect('/login?error=auth_failed');
+  }
+});`;
+
+  const getApiExample = (app: App) => `// ${app.name} - Credit Operations API
+// Use your App API Key (generated in Admin > API Keys)
+
+const API_KEY = 'your_app_api_key_here';
+const BASE_URL = '${baseUrl}';
+
+// Check user's credit balance
+async function checkBalance(userEmail) {
+  const response = await fetch(\`\${BASE_URL}/api/v2/balance\`, {
+    method: 'POST',
+    headers: {
+      'Authorization': \`Bearer \${API_KEY}\`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ user_email: userEmail }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    if (error.authorization_required) {
+      // User hasn't authorized this app yet
+      // Redirect them to: ${baseUrl}/apps to authorize
+      throw new Error('User has not authorized this app');
+    }
+    throw new Error(error.message);
+  }
+  
+  return response.json();
+  // Returns: { user_email, balance_cents, currency, subscription_status }
+}
+
+// Debit credits from user's account
+async function debitCredits(userEmail, amountCents, description) {
+  const response = await fetch(\`\${BASE_URL}/api/v2/debit\`, {
+    method: 'POST',
+    headers: {
+      'Authorization': \`Bearer \${API_KEY}\`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      user_email: userEmail,
+      amount_cents: amountCents,
+      description: description,
+      idempotency_key: \`\${Date.now()}-\${Math.random().toString(36)}\`,
+    }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    if (response.status === 402) {
+      throw new Error('Insufficient balance');
+    }
+    if (response.status === 403) {
+      throw new Error('User has not authorized this app');
+    }
+    throw new Error(error.message);
+  }
+  
+  return response.json();
+  // Returns: { success, transaction_id, amount_cents, new_balance_cents, auto_topup }
+}
+
+// Example usage
+async function handlePremiumFeature(userEmail) {
+  try {
+    // Check balance first
+    const { balance_cents } = await checkBalance(userEmail);
+    
+    if (balance_cents < 100) {
+      return { error: 'Insufficient credits', balance: balance_cents };
+    }
+    
+    // Debit $1.00 (100 cents) for the feature
+    const result = await debitCredits(userEmail, 100, 'Premium feature access');
+    
+    return { 
+      success: true, 
+      newBalance: result.new_balance_cents,
+      transactionId: result.transaction_id,
+    };
+  } catch (error) {
+    return { error: error.message };
+  }
+}`;
+
+  const getPythonExample = (app: App) => `# ${app.name} - Python Integration
+import hashlib
+import base64
+import secrets
+import requests
+
+# Configuration
+CLIENT_ID = '${app.clientId}'
+CLIENT_SECRET = '${app.clientSecret}'
+REDIRECT_URI = '${app.callbackUrl}'
+AUTH_BASE_URL = '${baseUrl}'
+
+def generate_pkce():
+    """Generate PKCE code verifier and challenge"""
+    verifier = secrets.token_urlsafe(32)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b'=').decode()
+    return verifier, challenge
+
+def get_authorization_url(state):
+    """Generate OAuth authorization URL with PKCE"""
+    verifier, challenge = generate_pkce()
+    params = {
+        'client_id': CLIENT_ID,
+        'redirect_uri': REDIRECT_URI,
+        'response_type': 'code',
+        'code_challenge': challenge,
+        'code_challenge_method': 'S256',
+        'scope': 'openid profile credits',
+        'state': state,
+    }
+    url = f"{AUTH_BASE_URL}/oauth/authorize?" + "&".join(f"{k}={v}" for k, v in params.items())
+    return url, verifier
+
+def exchange_code_for_token(code, code_verifier):
+    """Exchange authorization code for access token"""
+    response = requests.post(f"{AUTH_BASE_URL}/api/oauth/token", json={
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': REDIRECT_URI,
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'code_verifier': code_verifier,
+    })
+    response.raise_for_status()
+    return response.json()
+
+# Credit Operations with App API Key
+API_KEY = 'your_app_api_key_here'
+
+def check_balance(user_email):
+    """Check user's credit balance"""
+    response = requests.post(f"{AUTH_BASE_URL}/api/v2/balance",
+        headers={'Authorization': f'Bearer {API_KEY}'},
+        json={'user_email': user_email}
+    )
+    response.raise_for_status()
+    return response.json()
+
+def debit_credits(user_email, amount_cents, description):
+    """Debit credits from user's account"""
+    response = requests.post(f"{AUTH_BASE_URL}/api/v2/debit",
+        headers={'Authorization': f'Bearer {API_KEY}'},
+        json={
+            'user_email': user_email,
+            'amount_cents': amount_cents,
+            'description': description,
+            'idempotency_key': f"{secrets.token_hex(16)}",
+        }
+    )
+    response.raise_for_status()
+    return response.json()`;
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="h-5 w-5" />
+            Integration Guide
+          </CardTitle>
+          <CardDescription>
+            Complete setup instructions for external apps to integrate with the Work Digital membership platform
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label>Select App</Label>
+            <Select value={selectedAppId} onValueChange={setSelectedAppId}>
+              <SelectTrigger className="w-full" data-testid="select-integration-app">
+                <SelectValue placeholder="Choose an app to view its integration guide..." />
+              </SelectTrigger>
+              <SelectContent>
+                {apps?.map((app) => (
+                  <SelectItem key={app.id} value={app.id}>
+                    {app.name} ({app.slug})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {isLoading && (
+            <div className="space-y-3">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          )}
+
+          {!selectedApp && !isLoading && (
+            <div className="text-center py-8 text-muted-foreground">
+              Select an app above to view its integration guide
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {selectedApp && (
+        <>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Key className="h-5 w-5" />
+                {selectedApp.name} - Credentials
+              </CardTitle>
+              <CardDescription>
+                OAuth2 credentials for Single Sign-On integration
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Client ID</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={selectedApp.clientId}
+                      readOnly
+                      className="font-mono text-sm"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(selectedApp.clientId, "clientId")}
+                      data-testid="button-copy-client-id"
+                    >
+                      {copiedField === "clientId" ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Client Secret</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={selectedApp.clientSecret}
+                      readOnly
+                      className="font-mono text-sm"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(selectedApp.clientSecret, "clientSecret")}
+                      data-testid="button-copy-client-secret"
+                    >
+                      {copiedField === "clientSecret" ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <h3 className="font-medium" data-testid="text-oauth-endpoints">OAuth2 Endpoints</h3>
+                <div className="space-y-2">
+                  {[
+                    { label: "Authorization URL", value: `${baseUrl}/oauth/authorize`, testId: "auth-url" },
+                    { label: "Token Endpoint", value: `${baseUrl}/api/oauth/token`, testId: "token-url" },
+                    { label: "User Info", value: `${baseUrl}/api/oauth/userinfo`, testId: "userinfo-url" },
+                    { label: "Registered Callback", value: selectedApp.callbackUrl, testId: "callback-url" },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center justify-between gap-4 p-3 rounded-lg bg-muted/50" data-testid={`endpoint-${item.testId}`}>
+                      <div>
+                        <p className="text-sm font-medium">{item.label}</p>
+                        <code className="text-xs text-muted-foreground break-all" data-testid={`text-${item.testId}`}>{item.value}</code>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => copyToClipboard(item.value, item.label)}
+                        data-testid={`button-copy-${item.testId}`}
+                      >
+                        {copiedField === item.label ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ArrowRight className="h-5 w-5" />
+                SSO Flow Overview
+              </CardTitle>
+              <CardDescription>
+                OAuth 2.0 Authorization Code flow with PKCE (required)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="p-4 rounded-lg bg-primary/5 border border-primary/20">
+                <div className="flex items-start gap-3">
+                  <Shield className="h-5 w-5 text-primary mt-0.5" />
+                  <div>
+                    <h3 className="font-medium mb-1">Security Requirement</h3>
+                    <p className="text-sm text-muted-foreground">
+                      PKCE (Proof Key for Code Exchange) with S256 is required for all OAuth flows. 
+                      This prevents authorization code interception attacks.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-sm">1</div>
+                  <div className="space-y-1">
+                    <h3 className="font-medium">User Clicks "Sign in with Work Digital"</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Your app generates PKCE code_verifier and code_challenge, then redirects to the authorization URL
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-sm">2</div>
+                  <div className="space-y-1">
+                    <h3 className="font-medium">User Authenticates</h3>
+                    <p className="text-sm text-muted-foreground">
+                      User logs in (if needed) and sees the consent screen to authorize your app
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-sm">3</div>
+                  <div className="space-y-1">
+                    <h3 className="font-medium">Redirect with Authorization Code</h3>
+                    <p className="text-sm text-muted-foreground">
+                      User is redirected to your callback URL with <code className="px-1 bg-muted rounded">?code=xxx&state=xxx</code>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shrink-0 text-sm">4</div>
+                  <div className="space-y-1">
+                    <h3 className="font-medium">Exchange Code for Token</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Your server exchanges the code + code_verifier for an access token and user info
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <h3 className="font-medium">Required Authorization Parameters</h3>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Parameter</TableHead>
+                        <TableHead>Required</TableHead>
+                        <TableHead>Description</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell><code className="text-xs">client_id</code></TableCell>
+                        <TableCell><Badge variant="default">Yes</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">Your app's client ID</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><code className="text-xs">redirect_uri</code></TableCell>
+                        <TableCell><Badge variant="default">Yes</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">Must match registered callback URL</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><code className="text-xs">response_type</code></TableCell>
+                        <TableCell><Badge variant="default">Yes</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">Must be "code"</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><code className="text-xs">code_challenge</code></TableCell>
+                        <TableCell><Badge variant="default">Yes</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">Base64url SHA256 of code_verifier</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><code className="text-xs">code_challenge_method</code></TableCell>
+                        <TableCell><Badge variant="default">Yes</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">Must be "S256"</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><code className="text-xs">scope</code></TableCell>
+                        <TableCell><Badge variant="secondary">Optional</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">Space-separated: openid, profile, credits</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><code className="text-xs">state</code></TableCell>
+                        <TableCell><Badge variant="secondary">Recommended</Badge></TableCell>
+                        <TableCell className="text-sm text-muted-foreground">CSRF protection token</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Terminal className="h-5 w-5" />
+                B2B Credit Operations API
+              </CardTitle>
+              <CardDescription>
+                Use these endpoints to check balances and debit credits from authorized users
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
+                  <div>
+                    <h3 className="font-medium mb-1">App API Key Required</h3>
+                    <p className="text-sm text-muted-foreground">
+                      These endpoints require an App API Key (not OAuth tokens). Generate one in the "API Keys" tab above.
+                      Users must also authorize your app before you can access their credits.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="p-4 rounded-lg border" data-testid="endpoint-balance">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge className="bg-green-600">POST</Badge>
+                    <code className="text-sm font-semibold" data-testid="text-endpoint-balance">/api/v2/balance</code>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-3">Check a user's credit balance</p>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Request Body:</p>
+                    <CodeBlock code={`{ "user_email": "user@example.com" }`} testId="balance-request" />
+                    <p className="text-xs font-medium text-muted-foreground">Response:</p>
+                    <CodeBlock code={`{
+  "user_email": "user@example.com",
+  "balance_cents": 5000,
+  "currency": "USD",
+  "subscription_status": "ACTIVE"
+}`} testId="balance-response" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border" data-testid="endpoint-debit">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge className="bg-green-600">POST</Badge>
+                    <code className="text-sm font-semibold" data-testid="text-endpoint-debit">/api/v2/debit</code>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-3">Debit credits from a user's account</p>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Request Body:</p>
+                    <CodeBlock code={`{
+  "user_email": "user@example.com",
+  "amount_cents": 100,
+  "description": "Premium feature usage",
+  "idempotency_key": "unique-transaction-id"
+}`} testId="debit-request" />
+                    <p className="text-xs font-medium text-muted-foreground">Response:</p>
+                    <CodeBlock code={`{
+  "success": true,
+  "transaction_id": "txn_123abc",
+  "amount_cents": 100,
+  "new_balance_cents": 4900,
+  "auto_topup": {
+    "triggered": true,
+    "amount_cents": 1000
+  }
+}`} testId="debit-response" />
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg border" data-testid="endpoint-check-auth">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge className="bg-green-600">POST</Badge>
+                    <code className="text-sm font-semibold" data-testid="text-endpoint-check-auth">/api/v2/check-authorization</code>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-3">Check if a user has authorized your app</p>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Request Body:</p>
+                    <CodeBlock code={`{ "user_email": "user@example.com" }`} testId="check-auth-request" />
+                    <p className="text-xs font-medium text-muted-foreground">Response:</p>
+                    <CodeBlock code={`{
+  "authorized": true,
+  "subscription_status": "ACTIVE"
+}`} testId="check-auth-response" />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Code className="h-5 w-5" />
+                Code Examples
+              </CardTitle>
+              <CardDescription>
+                Ready-to-use integration code for {selectedApp.name}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <Tabs defaultValue="nodejs">
+                <TabsList>
+                  <TabsTrigger value="nodejs" data-testid="tab-code-nodejs">Node.js</TabsTrigger>
+                  <TabsTrigger value="api" data-testid="tab-code-api">API Client</TabsTrigger>
+                  <TabsTrigger value="python" data-testid="tab-code-python">Python</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="nodejs" className="mt-4">
+                  <div className="space-y-2">
+                    <h3 className="font-medium" data-testid="text-nodejs-title">Full SSO Implementation</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Complete OAuth2 + PKCE flow with Express.js
+                    </p>
+                    <CodeBlock code={getNodeJsExample(selectedApp)} language="javascript" testId="nodejs-sso" />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="api" className="mt-4">
+                  <div className="space-y-2">
+                    <h3 className="font-medium" data-testid="text-api-title">Credit Operations API Client</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      JavaScript client for balance checks and debits
+                    </p>
+                    <CodeBlock code={getApiExample(selectedApp)} language="javascript" testId="api-client" />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="python" className="mt-4">
+                  <div className="space-y-2">
+                    <h3 className="font-medium" data-testid="text-python-title">Python Integration</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Full SSO and API implementation in Python
+                    </p>
+                    <CodeBlock code={getPythonExample(selectedApp)} language="python" testId="python" />
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Shield className="h-5 w-5" />
+                Error Handling & Security
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <h3 className="font-medium">Common Error Codes</h3>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Error</TableHead>
+                        <TableHead>Description</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      <TableRow>
+                        <TableCell><Badge variant="outline">401</Badge></TableCell>
+                        <TableCell>Invalid API Key</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">The API key is missing, invalid, or expired</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><Badge variant="outline">402</Badge></TableCell>
+                        <TableCell>Insufficient Balance</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">User doesn't have enough credits for the debit</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><Badge variant="outline">403</Badge></TableCell>
+                        <TableCell>Not Authorized</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">User hasn't authorized this app - redirect them to authorize</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><Badge variant="outline">404</Badge></TableCell>
+                        <TableCell>User Not Found</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">No user with this email exists in the system</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell><Badge variant="outline">409</Badge></TableCell>
+                        <TableCell>Duplicate Transaction</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">An idempotency_key was reused</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <h3 className="font-medium">Security Best Practices</h3>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <h4 className="font-medium text-sm mb-1">Store Keys Securely</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Never expose API keys in client-side code or version control
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <h4 className="font-medium text-sm mb-1">Use HTTPS</h4>
+                    <p className="text-xs text-muted-foreground">
+                      All API requests must be made over HTTPS
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <h4 className="font-medium text-sm mb-1">Validate State Parameter</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Always validate the state parameter in OAuth callbacks
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-muted/50">
+                    <h4 className="font-medium text-sm mb-1">Use Idempotency Keys</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Prevent duplicate charges by using unique idempotency keys
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AppApiKeysTab() {
   const { toast } = useToast();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -1015,7 +1797,7 @@ export default function AdminPage() {
         <StatsCards stats={stats} isLoading={statsLoading} />
 
         <Tabs defaultValue="users" className="space-y-6">
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="users" className="gap-2" data-testid="tab-users">
               <Users className="h-4 w-4" />
               Users
@@ -1027,6 +1809,10 @@ export default function AdminPage() {
             <TabsTrigger value="api-keys" className="gap-2" data-testid="tab-api-keys">
               <Key className="h-4 w-4" />
               API Keys
+            </TabsTrigger>
+            <TabsTrigger value="integration" className="gap-2" data-testid="tab-integration">
+              <BookOpen className="h-4 w-4" />
+              Integration Guide
             </TabsTrigger>
           </TabsList>
 
@@ -1040,6 +1826,10 @@ export default function AdminPage() {
 
           <TabsContent value="api-keys">
             <AppApiKeysTab />
+          </TabsContent>
+
+          <TabsContent value="integration">
+            <IntegrationGuideTab />
           </TabsContent>
         </Tabs>
       </div>
