@@ -20,6 +20,27 @@ export const auditEventTypeEnum = pgEnum("audit_event_type", [
   "ADMIN_ACTION"
 ]);
 
+export const webhookEventTypeEnum = pgEnum("webhook_event_type", [
+  "PAYMENT_SUCCEEDED",
+  "PAYMENT_FAILED",
+  "PAYMENT_PENDING",
+  "PAYMENT_REFUNDED",
+  "PAYMENT_METHOD_ATTACHED",
+  "PAYMENT_METHOD_DETACHED",
+  "SUBSCRIPTION_CREATED",
+  "SUBSCRIPTION_CANCELLED",
+  "AUTO_TOPUP_TRIGGERED",
+  "AUTO_TOPUP_FAILED"
+]);
+
+export const webhookEventStatusEnum = pgEnum("webhook_event_status", [
+  "PENDING",
+  "PROCESSING",
+  "COMPLETED",
+  "FAILED",
+  "RETRYING"
+]);
+
 export const auditLogs = pgTable("audit_logs", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
@@ -30,6 +51,22 @@ export const auditLogs = pgTable("audit_logs", {
   details: text("details"),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const webhookEvents = pgTable("webhook_events", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  eventType: webhookEventTypeEnum("event_type").notNull(),
+  status: webhookEventStatusEnum("status").default("PENDING").notNull(),
+  userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  payload: text("payload"),
+  processingResult: text("processing_result"),
+  attempts: bigint("attempts", { mode: "number" }).default(0).notNull(),
+  maxAttempts: bigint("max_attempts", { mode: "number" }).default(3).notNull(),
+  nextRetryAt: timestamp("next_retry_at"),
+  processedAt: timestamp("processed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -93,6 +130,8 @@ export const autoTopupRules = pgTable("auto_topup_rules", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const billingCycleEnum = pgEnum("billing_cycle", ["MONTHLY", "YEARLY", "PER_USE"]);
+
 export const apps = pgTable("apps", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -100,6 +139,10 @@ export const apps = pgTable("apps", {
   description: text("description").notNull(),
   callbackUrl: text("callback_url").notNull(),
   pricingModel: text("pricing_model").notNull(),
+  billingCycle: billingCycleEnum("billing_cycle").default("MONTHLY"),
+  monthlyPriceCents: bigint("monthly_price_cents", { mode: "number" }).default(0),
+  yearlyPriceCents: bigint("yearly_price_cents", { mode: "number" }).default(0),
+  perUsePriceCents: bigint("per_use_price_cents", { mode: "number" }).default(0),
   clientId: text("client_id").notNull().unique(),
   clientSecret: text("client_secret").notNull(),
   iconUrl: text("icon_url"),
@@ -108,11 +151,19 @@ export const apps = pgTable("apps", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const subscriptionStatusEnum = pgEnum("subscription_status", ["ACTIVE", "PAUSED", "CANCELLED", "EXPIRED", "PENDING"]);
+
 export const appSubscriptions = pgTable("app_subscriptions", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
   appId: varchar("app_id", { length: 36 }).notNull().references(() => apps.id, { onDelete: "cascade" }),
-  status: text("status").default("active").notNull(),
+  billingCycle: billingCycleEnum("billing_cycle").default("MONTHLY"),
+  status: subscriptionStatusEnum("status").default("ACTIVE").notNull(),
+  currentPeriodStart: timestamp("current_period_start").defaultNow().notNull(),
+  currentPeriodEnd: timestamp("current_period_end"),
+  nextBillingDate: timestamp("next_billing_date"),
+  lastBilledAt: timestamp("last_billed_at"),
+  totalUsageCount: bigint("total_usage_count", { mode: "number" }).default(0),
   subscribedAt: timestamp("subscribed_at").defaultNow().notNull(),
   cancelledAt: timestamp("cancelled_at"),
 });
@@ -189,6 +240,10 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   user: one(users, { fields: [auditLogs.userId], references: [users.id] }),
 }));
 
+export const webhookEventsRelations = relations(webhookEvents, ({ one }) => ({
+  user: one(users, { fields: [webhookEvents.userId], references: [users.id] }),
+}));
+
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
@@ -240,6 +295,8 @@ export const insertAppSubscriptionSchema = createInsertSchema(appSubscriptions).
   id: true,
   subscribedAt: true,
   cancelledAt: true,
+  lastBilledAt: true,
+  currentPeriodStart: true,
 });
 
 export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
@@ -253,6 +310,12 @@ export const insertApiKeySchema = createInsertSchema(apiKeys).omit({
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({
   id: true,
   createdAt: true,
+});
+
+export const insertWebhookEventSchema = createInsertSchema(webhookEvents).omit({
+  id: true,
+  createdAt: true,
+  processedAt: true,
 });
 
 export const fundWalletSchema = z.object({
@@ -287,3 +350,5 @@ export type InsertApiKey = z.infer<typeof insertApiKeySchema>;
 export type RefreshToken = typeof refreshTokens.$inferSelect;
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+export type InsertWebhookEvent = z.infer<typeof insertWebhookEventSchema>;

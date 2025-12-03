@@ -9,6 +9,7 @@ import {
   apiKeys,
   refreshTokens,
   auditLogs,
+  webhookEvents,
   type User,
   type InsertUser,
   type Wallet,
@@ -28,6 +29,8 @@ import {
   type RefreshToken,
   type AuditLog,
   type InsertAuditLog,
+  type WebhookEvent,
+  type InsertWebhookEvent,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -60,6 +63,7 @@ export interface IStorage {
   getAutoTopupRuleByUserId(userId: string): Promise<AutoTopupRule | undefined>;
   createAutoTopupRule(rule: Omit<AutoTopupRule, "id" | "createdAt" | "updatedAt">): Promise<AutoTopupRule>;
   updateAutoTopupRule(id: string, data: Partial<AutoTopupRule>): Promise<AutoTopupRule | undefined>;
+  getActiveAutoTopupRulesWithLowBalance(): Promise<(AutoTopupRule & { wallet: Wallet; paymentMethod: PaymentMethod })[]>;
 
   getApp(id: string): Promise<App | undefined>;
   getAppBySlug(slug: string): Promise<App | undefined>;
@@ -69,9 +73,13 @@ export interface IStorage {
   updateApp(id: string, data: Partial<App>): Promise<App | undefined>;
 
   getAppSubscription(userId: string, appId: string): Promise<AppSubscription | undefined>;
+  getAppSubscriptionById(id: string): Promise<AppSubscription | undefined>;
   getAppSubscriptionsByUserId(userId: string): Promise<(AppSubscription & { app: App })[]>;
-  createAppSubscription(subscription: Omit<AppSubscription, "id" | "subscribedAt">): Promise<AppSubscription>;
+  createAppSubscription(subscription: Omit<AppSubscription, "id" | "subscribedAt" | "currentPeriodStart">): Promise<AppSubscription>;
   cancelAppSubscription(userId: string, appId: string): Promise<void>;
+  updateAppSubscription(id: string, data: Partial<AppSubscription>): Promise<AppSubscription | undefined>;
+  getSubscriptionsDueToBill(): Promise<(AppSubscription & { app: App; user: User })[]>;
+  incrementSubscriptionUsage(subscriptionId: string): Promise<void>;
 
   getApiKey(id: string): Promise<ApiKey | undefined>;
   getApiKeysByUserId(userId: string): Promise<ApiKey[]>;
@@ -95,6 +103,12 @@ export interface IStorage {
   createAuditLog(log: Omit<AuditLog, "id" | "createdAt">): Promise<AuditLog>;
   getAuditLogsByUserId(userId: string, limit?: number): Promise<AuditLog[]>;
   getAuditLogs(limit?: number): Promise<AuditLog[]>;
+
+  createWebhookEvent(event: Omit<WebhookEvent, "id" | "createdAt" | "processedAt">): Promise<WebhookEvent>;
+  getWebhookEvent(id: string): Promise<WebhookEvent | undefined>;
+  getPendingWebhookEvents(limit?: number): Promise<WebhookEvent[]>;
+  updateWebhookEventStatus(id: string, status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "RETRYING", result?: string): Promise<WebhookEvent | undefined>;
+  getWebhookEvents(limit?: number): Promise<WebhookEvent[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -239,6 +253,26 @@ export class DatabaseStorage implements IStorage {
     return updated || undefined;
   }
 
+  async getActiveAutoTopupRulesWithLowBalance(): Promise<(AutoTopupRule & { wallet: Wallet; paymentMethod: PaymentMethod })[]> {
+    const result = await db
+      .select()
+      .from(autoTopupRules)
+      .innerJoin(wallets, eq(autoTopupRules.walletId, wallets.id))
+      .innerJoin(paymentMethods, eq(autoTopupRules.paymentMethodId, paymentMethods.id))
+      .where(
+        and(
+          eq(autoTopupRules.active, true),
+          sql`${wallets.balanceCents} < ${autoTopupRules.thresholdCents}`
+        )
+      );
+
+    return result.map((row) => ({
+      ...row.auto_topup_rules,
+      wallet: row.wallets,
+      paymentMethod: row.payment_methods,
+    }));
+  }
+
   async getApp(id: string): Promise<App | undefined> {
     const [app] = await db.select().from(apps).where(eq(apps.id, id));
     return app || undefined;
@@ -293,7 +327,12 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
-  async createAppSubscription(subscription: Omit<AppSubscription, "id" | "subscribedAt">): Promise<AppSubscription> {
+  async getAppSubscriptionById(id: string): Promise<AppSubscription | undefined> {
+    const [subscription] = await db.select().from(appSubscriptions).where(eq(appSubscriptions.id, id));
+    return subscription || undefined;
+  }
+
+  async createAppSubscription(subscription: Omit<AppSubscription, "id" | "subscribedAt" | "currentPeriodStart">): Promise<AppSubscription> {
     const [created] = await db.insert(appSubscriptions).values(subscription).returning();
     return created;
   }
@@ -301,8 +340,44 @@ export class DatabaseStorage implements IStorage {
   async cancelAppSubscription(userId: string, appId: string): Promise<void> {
     await db
       .update(appSubscriptions)
-      .set({ status: "cancelled", cancelledAt: new Date() })
+      .set({ status: "CANCELLED", cancelledAt: new Date() })
       .where(and(eq(appSubscriptions.userId, userId), eq(appSubscriptions.appId, appId)));
+  }
+
+  async updateAppSubscription(id: string, data: Partial<AppSubscription>): Promise<AppSubscription | undefined> {
+    const [updated] = await db
+      .update(appSubscriptions)
+      .set(data)
+      .where(eq(appSubscriptions.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getSubscriptionsDueToBill(): Promise<(AppSubscription & { app: App; user: User })[]> {
+    const result = await db
+      .select()
+      .from(appSubscriptions)
+      .innerJoin(apps, eq(appSubscriptions.appId, apps.id))
+      .innerJoin(users, eq(appSubscriptions.userId, users.id))
+      .where(
+        and(
+          eq(appSubscriptions.status, "ACTIVE"),
+          sql`${appSubscriptions.nextBillingDate} IS NOT NULL AND ${appSubscriptions.nextBillingDate} <= NOW()`
+        )
+      );
+
+    return result.map((row) => ({
+      ...row.app_subscriptions,
+      app: row.apps,
+      user: row.users,
+    }));
+  }
+
+  async incrementSubscriptionUsage(subscriptionId: string): Promise<void> {
+    await db
+      .update(appSubscriptions)
+      .set({ totalUsageCount: sql`${appSubscriptions.totalUsageCount} + 1` })
+      .where(eq(appSubscriptions.id, subscriptionId));
   }
 
   async getApiKey(id: string): Promise<ApiKey | undefined> {
@@ -392,6 +467,66 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(auditLogs)
       .orderBy(desc(auditLogs.createdAt))
+      .limit(limit);
+  }
+
+  async createWebhookEvent(event: Omit<WebhookEvent, "id" | "createdAt" | "processedAt">): Promise<WebhookEvent> {
+    const [created] = await db.insert(webhookEvents).values(event).returning();
+    return created;
+  }
+
+  async getWebhookEvent(id: string): Promise<WebhookEvent | undefined> {
+    const [event] = await db.select().from(webhookEvents).where(eq(webhookEvents.id, id));
+    return event || undefined;
+  }
+
+  async getPendingWebhookEvents(limit = 50): Promise<WebhookEvent[]> {
+    return db
+      .select()
+      .from(webhookEvents)
+      .where(
+        sql`${webhookEvents.status} IN ('PENDING', 'RETRYING') 
+            AND (${webhookEvents.nextRetryAt} IS NULL OR ${webhookEvents.nextRetryAt} <= NOW())`
+      )
+      .orderBy(webhookEvents.createdAt)
+      .limit(limit);
+  }
+
+  async updateWebhookEventStatus(
+    id: string, 
+    status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "RETRYING", 
+    result?: string
+  ): Promise<WebhookEvent | undefined> {
+    const updateData: Partial<WebhookEvent> = { 
+      status,
+      attempts: sql`${webhookEvents.attempts} + 1` as any,
+    };
+
+    if (result) {
+      updateData.processingResult = result;
+    }
+
+    if (status === "COMPLETED" || status === "FAILED") {
+      updateData.processedAt = new Date();
+    }
+
+    if (status === "RETRYING") {
+      updateData.nextRetryAt = new Date(Date.now() + 60000);
+    }
+
+    const [updated] = await db
+      .update(webhookEvents)
+      .set(updateData)
+      .where(eq(webhookEvents.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getWebhookEvents(limit = 100): Promise<WebhookEvent[]> {
+    return db
+      .select()
+      .from(webhookEvents)
+      .orderBy(desc(webhookEvents.createdAt))
       .limit(limit);
   }
 }

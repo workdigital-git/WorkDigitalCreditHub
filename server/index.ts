@@ -3,6 +3,7 @@ import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { startBackgroundJobs } from "./background-jobs";
 
 const app = express();
 app.use(cookieParser());
@@ -95,6 +96,7 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+      startBackgroundJobs(60000);
     },
   );
 })();

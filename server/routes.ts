@@ -744,29 +744,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const existing = await storage.getAppSubscription(req.user!.id, req.params.id);
-      if (existing && existing.status === "active") {
+      if (existing && existing.status === "ACTIVE") {
         return res.status(400).json({ message: "Already subscribed" });
       }
 
-      if (existing) {
-        await storage.createAppSubscription({
-          userId: req.user!.id,
-          appId: req.params.id,
-          status: "active",
-          cancelledAt: null,
-        });
-      } else {
-        await storage.createAppSubscription({
-          userId: req.user!.id,
-          appId: req.params.id,
-          status: "active",
-          cancelledAt: null,
-        });
+      const { billingCycle = "MONTHLY" } = req.body;
+      
+      const periodStart = new Date();
+      let periodEnd = new Date();
+      let nextBillingDate = new Date();
+
+      switch (billingCycle) {
+        case "MONTHLY":
+          periodEnd = new Date(periodStart.getTime() + 30 * 24 * 60 * 60 * 1000);
+          nextBillingDate = periodEnd;
+          break;
+        case "YEARLY":
+          periodEnd = new Date(periodStart.getTime() + 365 * 24 * 60 * 60 * 1000);
+          nextBillingDate = periodEnd;
+          break;
+        case "PER_USE":
+          periodEnd = new Date(periodStart.getTime() + 30 * 24 * 60 * 60 * 1000);
+          nextBillingDate = periodEnd;
+          break;
+        default:
+          break;
       }
 
-      await createAuditLog(req, "APP_SUBSCRIBE", "Subscribed to app", req.user!.id, "app", req.params.id, { appName: app.name });
+      const subscription = await storage.createAppSubscription({
+        userId: req.user!.id,
+        appId: req.params.id,
+        billingCycle: billingCycle as "MONTHLY" | "YEARLY" | "PER_USE",
+        status: "ACTIVE",
+        currentPeriodEnd: periodEnd,
+        nextBillingDate,
+        totalUsageCount: 0,
+        cancelledAt: null,
+      });
 
-      res.json({ success: true });
+      await createAuditLog(req, "APP_SUBSCRIBE", "Subscribed to app", req.user!.id, "app", req.params.id, { 
+        appName: app.name, 
+        billingCycle,
+        subscriptionId: subscription.id,
+      });
+
+      res.json({ success: true, subscription });
     } catch (error) {
       console.error("Subscribe error:", error);
       res.status(500).json({ message: "Failed to subscribe" });
@@ -783,6 +805,50 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("Unsubscribe error:", error);
       res.status(500).json({ message: "Failed to unsubscribe" });
+    }
+  });
+
+  app.post("/api/external/track-usage", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ message: "API key required" });
+      }
+
+      const key = authHeader.slice(7);
+      const keyHash = hashToken(key);
+      const apiKey = await storage.getApiKeyByHash(keyHash);
+
+      if (!apiKey) {
+        return res.status(401).json({ message: "Invalid API key" });
+      }
+
+      if (apiKey.expiresAt && apiKey.expiresAt < new Date()) {
+        return res.status(401).json({ message: "API key expired" });
+      }
+
+      await storage.updateApiKeyLastUsed(apiKey.id);
+
+      const { appId } = req.body;
+      if (!appId) {
+        return res.status(400).json({ message: "appId is required" });
+      }
+
+      const subscription = await storage.getAppSubscription(apiKey.userId, appId);
+      if (!subscription || subscription.status !== "ACTIVE") {
+        return res.status(400).json({ message: "No active subscription for this app" });
+      }
+
+      await storage.incrementSubscriptionUsage(subscription.id);
+
+      res.json({ 
+        success: true,
+        message: "Usage tracked",
+        subscriptionId: subscription.id,
+      });
+    } catch (error) {
+      console.error("Track usage error:", error);
+      res.status(500).json({ message: "Failed to track usage" });
     }
   });
 
@@ -1073,5 +1139,155 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.post("/api/webhooks/simulate-payment", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { eventType, transactionId, status } = req.body;
+
+      if (!eventType || !["PAYMENT_SUCCEEDED", "PAYMENT_FAILED", "PAYMENT_PENDING"].includes(eventType)) {
+        return res.status(400).json({ message: "Invalid event type" });
+      }
+
+      const webhookEvent = await storage.createWebhookEvent({
+        eventType,
+        status: "PENDING",
+        userId: req.user!.id,
+        entityType: "transaction",
+        entityId: transactionId,
+        payload: JSON.stringify({ transactionId, status, simulatedAt: new Date() }),
+        attempts: 0,
+        maxAttempts: 3,
+        nextRetryAt: null,
+      });
+
+      await processWebhookEvent(webhookEvent);
+
+      res.json({ 
+        message: "Webhook event processed",
+        eventId: webhookEvent.id,
+      });
+    } catch (error) {
+      console.error("Simulate payment webhook error:", error);
+      res.status(500).json({ message: "Failed to process webhook" });
+    }
+  });
+
+  app.get("/api/admin/webhook-events", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const events = await storage.getWebhookEvents(limit);
+      res.json(events);
+    } catch (error) {
+      console.error("Get webhook events error:", error);
+      res.status(500).json({ message: "Failed to get webhook events" });
+    }
+  });
+
+  app.post("/api/webhooks/process-pending", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const pendingEvents = await storage.getPendingWebhookEvents();
+      let processed = 0;
+      let failed = 0;
+
+      for (const event of pendingEvents) {
+        const result = await processWebhookEvent(event);
+        if (result.success) {
+          processed++;
+        } else {
+          failed++;
+        }
+      }
+
+      res.json({ 
+        message: "Webhook processing complete",
+        processed,
+        failed,
+        total: pendingEvents.length,
+      });
+    } catch (error) {
+      console.error("Process pending webhooks error:", error);
+      res.status(500).json({ message: "Failed to process webhooks" });
+    }
+  });
+
+  app.get("/api/admin/background-jobs/status", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { getJobStatus } = await import("./background-jobs");
+      const status = getJobStatus();
+      res.json(status);
+    } catch (error) {
+      console.error("Get job status error:", error);
+      res.status(500).json({ message: "Failed to get job status" });
+    }
+  });
+
+  app.post("/api/admin/background-jobs/run", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { runJobsManually } = await import("./background-jobs");
+      const result = await runJobsManually();
+
+      await createAuditLog(req, "ADMIN_ACTION", "Manual background job run", req.user!.id, "system", null, result);
+
+      res.json({
+        message: "Background jobs executed manually",
+        ...result,
+      });
+    } catch (error) {
+      console.error("Run jobs manually error:", error);
+      res.status(500).json({ message: "Failed to run jobs" });
+    }
+  });
+
   return httpServer;
+}
+
+async function processWebhookEvent(event: any): Promise<{ success: boolean; message: string }> {
+  try {
+    await storage.updateWebhookEventStatus(event.id, "PROCESSING");
+
+    const payload = event.payload ? JSON.parse(event.payload) : {};
+
+    switch (event.eventType) {
+      case "PAYMENT_SUCCEEDED":
+        if (payload.transactionId) {
+          await storage.updateTransactionStatus(payload.transactionId, "COMPLETED");
+        }
+        await storage.updateWebhookEventStatus(event.id, "COMPLETED", "Payment marked as completed");
+        return { success: true, message: "Payment succeeded processed" };
+
+      case "PAYMENT_FAILED":
+        if (payload.transactionId) {
+          await storage.updateTransactionStatus(payload.transactionId, "FAILED");
+        }
+        await storage.updateWebhookEventStatus(event.id, "COMPLETED", "Payment marked as failed");
+        return { success: true, message: "Payment failed processed" };
+
+      case "PAYMENT_PENDING":
+        if (payload.transactionId) {
+          await storage.updateTransactionStatus(payload.transactionId, "PENDING");
+        }
+        await storage.updateWebhookEventStatus(event.id, "COMPLETED", "Payment marked as pending");
+        return { success: true, message: "Payment pending processed" };
+
+      case "AUTO_TOPUP_TRIGGERED":
+        await storage.updateWebhookEventStatus(event.id, "COMPLETED", "Auto topup event logged");
+        return { success: true, message: "Auto topup event logged" };
+
+      case "AUTO_TOPUP_FAILED":
+        await storage.updateWebhookEventStatus(event.id, "COMPLETED", "Auto topup failure logged");
+        return { success: true, message: "Auto topup failure logged" };
+
+      default:
+        await storage.updateWebhookEventStatus(event.id, "COMPLETED", `Event ${event.eventType} processed`);
+        return { success: true, message: `Event ${event.eventType} processed` };
+    }
+  } catch (error: any) {
+    const event_data = await storage.getWebhookEvent(event.id);
+    if (event_data && event_data.attempts < event_data.maxAttempts) {
+      await storage.updateWebhookEventStatus(event.id, "RETRYING", error.message);
+      return { success: false, message: `Retry scheduled: ${error.message}` };
+    } else {
+      await storage.updateWebhookEventStatus(event.id, "FAILED", error.message);
+      return { success: false, message: `Failed: ${error.message}` };
+    }
+  }
 }

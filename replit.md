@@ -176,6 +176,69 @@ Comprehensive audit logging for all financial transactions and authentication ev
 - Action description, JSON details
 - IP address, user agent, timestamp
 
+## Webhook Event System
+
+Infrastructure for handling payment status updates:
+
+**Event Types:**
+- `PAYMENT_SUCCEEDED`, `PAYMENT_FAILED`, `PAYMENT_PENDING`, `PAYMENT_REFUNDED`
+- `PAYMENT_METHOD_ATTACHED`, `PAYMENT_METHOD_DETACHED`
+- `SUBSCRIPTION_CREATED`, `SUBSCRIPTION_CANCELLED`
+- `AUTO_TOPUP_TRIGGERED`, `AUTO_TOPUP_FAILED`
+
+**API Endpoints:**
+- `POST /api/webhooks/simulate-payment` - Simulate payment events (for testing)
+- `GET /api/admin/webhook-events` - Admin view all webhook events
+- `POST /api/webhooks/process-pending` - Manually process pending webhook events
+
+**Event Processing:**
+- Events support retry logic with configurable max attempts
+- Status tracking: PENDING, PROCESSING, COMPLETED, FAILED, RETRYING
+- Automatic transaction status updates on payment events
+
+## Background Job Processor
+
+Automatic scheduled processing for system operations:
+
+**Jobs:**
+- Auto-topup checks: Scans wallets below threshold and triggers top-ups
+- Webhook retry processing: Retries failed webhook events
+- Subscription billing: Processes recurring subscription charges
+
+**API Endpoints:**
+- `GET /api/admin/background-jobs/status` - Get background job status
+- `POST /api/admin/background-jobs/run` - Manually trigger background jobs
+
+**Configuration:**
+- Default interval: 60 seconds
+- Starts automatically on server startup
+
+## Subscription Billing System
+
+Recurring billing for app subscriptions:
+
+**Billing Cycles:**
+- `MONTHLY` - Billed every 30 days
+- `YEARLY` - Billed every 365 days
+- `PER_USE` - Billed based on usage count per billing period
+
+**Subscription Status:**
+- `ACTIVE` - Subscription is active and will be billed
+- `PAUSED` - Subscription paused due to insufficient balance
+- `CANCELLED` - User cancelled the subscription
+- `EXPIRED` - Subscription expired
+- `PENDING` - Awaiting initial payment
+
+**API Endpoints:**
+- `POST /api/apps/:id/subscribe` - Subscribe with billing cycle selection
+- `POST /api/apps/:id/unsubscribe` - Cancel subscription
+- `POST /api/external/track-usage` - Track usage for per-use billing
+
+**App Pricing Fields:**
+- `monthlyPriceCents` - Monthly subscription price
+- `yearlyPriceCents` - Yearly subscription price
+- `perUsePriceCents` - Price per usage event
+
 ## User Preferences
 
 - Design follows Stripe-inspired minimal aesthetic
