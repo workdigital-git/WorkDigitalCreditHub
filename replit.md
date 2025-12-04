@@ -350,6 +350,29 @@ Dual-method two-factor authentication with Plivo SMS integration:
 - `PLIVO_AUTH_TOKEN` - Plivo auth token
 - `PLIVO_PHONE_NUMBER` - Plivo sender phone number
 
+## Admin Integration Guide
+
+The Admin panel (Admin > Integration Guide tab) provides comprehensive documentation for integrating external apps:
+
+**Quick Start Checklist:**
+- Copy-paste workflow for setting up new service integrations
+- Step-by-step process from app registration to credit operations
+- Environment variables template
+- Testing checklist
+
+**OpenAPI Specification:**
+- Complete OpenAPI 3.0 JSON specification
+- Machine-readable format for AI tools (Replit Agent, etc.) and API clients
+- Importable into Postman, Swagger UI, Insomnia, etc.
+- Covers all OAuth2 and B2B credit operations endpoints
+- Includes request/response schemas, authentication requirements, and error codes
+
+**App-Specific Code Examples:**
+- Pre-filled credentials for selected app
+- OAuth flow implementation in Node.js and Python
+- Credit operations examples
+- Error handling guidance
+
 ## Integration Notes
 
 - **Stripe Integration**: User chose to skip Stripe integration (dismissed connector setup on 2025-12-03). Currently using simulated payment processing. To enable real payments in the future, user can provide STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY secrets.

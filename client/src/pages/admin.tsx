@@ -60,6 +60,8 @@ import {
   ArrowRight,
   Edit,
   Globe,
+  FileJson,
+  Info,
 } from "lucide-react";
 import type { User, App, Wallet } from "@shared/schema";
 
@@ -1275,6 +1277,306 @@ Body: {
 □ Idempotency keys prevent duplicate charges
 `;
 
+  const openApiSpec = {
+    openapi: "3.0.3",
+    info: {
+      title: "Work Digital Credits Hub API",
+      description: "OAuth2 SSO and B2B Credit Operations API for integrated services. This API allows external applications to authenticate users via OAuth2 with PKCE and manage credit operations (balance checks, debits) for authorized users.",
+      version: "2.0.0",
+      contact: {
+        name: "Work Digital Support",
+        url: baseUrl
+      }
+    },
+    servers: [
+      {
+        url: baseUrl,
+        description: "Credits Hub Server"
+      }
+    ],
+    tags: [
+      { name: "OAuth2", description: "OAuth2 Authorization Code flow with PKCE" },
+      { name: "Credits", description: "B2B Credit operations API" }
+    ],
+    paths: {
+      "/oauth/authorize": {
+        get: {
+          tags: ["OAuth2"],
+          summary: "OAuth2 Authorization Endpoint",
+          description: "Redirects user to login/consent page. After authorization, redirects back to redirect_uri with authorization code.",
+          parameters: [
+            { name: "client_id", in: "query", required: true, schema: { type: "string" }, description: "Your app's client ID" },
+            { name: "redirect_uri", in: "query", required: true, schema: { type: "string", format: "uri" }, description: "Must match registered callback URL" },
+            { name: "response_type", in: "query", required: true, schema: { type: "string", enum: ["code"] }, description: "Must be 'code'" },
+            { name: "code_challenge", in: "query", required: true, schema: { type: "string" }, description: "Base64url SHA256 hash of code_verifier (PKCE)" },
+            { name: "code_challenge_method", in: "query", required: true, schema: { type: "string", enum: ["S256"] }, description: "Must be 'S256'" },
+            { name: "scope", in: "query", required: false, schema: { type: "string" }, description: "Space-separated: openid profile credits" },
+            { name: "state", in: "query", required: false, schema: { type: "string" }, description: "CSRF protection token (recommended)" }
+          ],
+          responses: {
+            "302": { description: "Redirects to login page or back to redirect_uri with code" },
+            "400": { description: "Invalid request parameters" }
+          }
+        }
+      },
+      "/api/oauth/token": {
+        post: {
+          tags: ["OAuth2"],
+          summary: "Token Exchange Endpoint",
+          description: "Exchange authorization code for access token and user info",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["grant_type", "code", "redirect_uri", "client_id", "code_verifier"],
+                  properties: {
+                    grant_type: { type: "string", enum: ["authorization_code"], description: "Must be 'authorization_code'" },
+                    code: { type: "string", description: "Authorization code received from callback" },
+                    redirect_uri: { type: "string", format: "uri", description: "Must match the original redirect_uri" },
+                    client_id: { type: "string", description: "Your app's client ID" },
+                    client_secret: { type: "string", description: "Your app's client secret" },
+                    code_verifier: { type: "string", description: "Original PKCE code_verifier (before hashing)" }
+                  }
+                },
+                example: {
+                  grant_type: "authorization_code",
+                  code: "abc123...",
+                  redirect_uri: "https://yourapp.com/api/auth/callback",
+                  client_id: "client_xxx",
+                  client_secret: "xxx",
+                  code_verifier: "random-32-byte-string-base64url"
+                }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Successful token exchange",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      access_token: { type: "string", description: "OAuth access token" },
+                      token_type: { type: "string", enum: ["Bearer"] },
+                      expires_in: { type: "integer", description: "Token lifetime in seconds" },
+                      scope: { type: "string", nullable: true },
+                      user: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string", format: "uuid" },
+                          email: { type: "string", format: "email" },
+                          fullName: { type: "string", nullable: true }
+                        }
+                      }
+                    }
+                  },
+                  example: {
+                    access_token: "abc123...",
+                    token_type: "Bearer",
+                    expires_in: 3600,
+                    scope: "openid profile credits",
+                    user: { id: "uuid", email: "user@example.com", fullName: "John Doe" }
+                  }
+                }
+              }
+            },
+            "400": { description: "Invalid grant, expired code, or PKCE mismatch" },
+            "401": { description: "Invalid client credentials" }
+          }
+        }
+      },
+      "/api/oauth/userinfo": {
+        get: {
+          tags: ["OAuth2"],
+          summary: "Get User Info",
+          description: "Retrieve user profile information using OAuth access token",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": {
+              description: "User info",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      sub: { type: "string", description: "User ID" },
+                      email: { type: "string", format: "email" },
+                      name: { type: "string", nullable: true }
+                    }
+                  }
+                }
+              }
+            },
+            "401": { description: "Invalid or expired token" }
+          }
+        }
+      },
+      "/api/v2/balance": {
+        post: {
+          tags: ["Credits"],
+          summary: "Check User Balance",
+          description: "Check an authorized user's credit balance. User must have authorized your app.",
+          security: [{ apiKeyAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["user_email"],
+                  properties: {
+                    user_email: { type: "string", format: "email", description: "Email of the user to check" }
+                  }
+                },
+                example: { user_email: "user@example.com" }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Balance retrieved successfully",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      user_email: { type: "string", format: "email" },
+                      balance_cents: { type: "integer", description: "Current balance in cents" },
+                      currency: { type: "string", enum: ["USD"] },
+                      subscription_status: { type: "string", enum: ["ACTIVE", "PAUSED", "CANCELLED", "PENDING"] }
+                    }
+                  },
+                  example: { user_email: "user@example.com", balance_cents: 5000, currency: "USD", subscription_status: "ACTIVE" }
+                }
+              }
+            },
+            "401": { description: "Invalid or missing API key" },
+            "403": { description: "User has not authorized this app" },
+            "404": { description: "User not found" }
+          }
+        }
+      },
+      "/api/v2/debit": {
+        post: {
+          tags: ["Credits"],
+          summary: "Debit User Credits",
+          description: "Debit credits from an authorized user's account. Supports idempotency keys to prevent duplicate charges.",
+          security: [{ apiKeyAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["user_email", "amount_cents", "description"],
+                  properties: {
+                    user_email: { type: "string", format: "email", description: "Email of the user to charge" },
+                    amount_cents: { type: "integer", minimum: 1, description: "Amount to debit in cents" },
+                    description: { type: "string", description: "Description of the charge" },
+                    idempotency_key: { type: "string", description: "Unique key to prevent duplicate charges" }
+                  }
+                },
+                example: { user_email: "user@example.com", amount_cents: 100, description: "Premium feature usage", idempotency_key: "unique-tx-id-123" }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Debit successful",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      success: { type: "boolean" },
+                      transaction_id: { type: "string" },
+                      amount_cents: { type: "integer" },
+                      new_balance_cents: { type: "integer" },
+                      auto_topup: {
+                        type: "object",
+                        nullable: true,
+                        properties: {
+                          triggered: { type: "boolean" },
+                          amount_cents: { type: "integer" }
+                        }
+                      }
+                    }
+                  },
+                  example: { success: true, transaction_id: "txn_abc123", amount_cents: 100, new_balance_cents: 4900, auto_topup: null }
+                }
+              }
+            },
+            "401": { description: "Invalid or missing API key" },
+            "402": { description: "Insufficient balance" },
+            "403": { description: "User has not authorized this app" },
+            "404": { description: "User not found" },
+            "409": { description: "Duplicate idempotency_key" }
+          }
+        }
+      },
+      "/api/v2/check-authorization": {
+        post: {
+          tags: ["Credits"],
+          summary: "Check User Authorization",
+          description: "Check if a user has authorized your app to access their credits",
+          security: [{ apiKeyAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["user_email"],
+                  properties: {
+                    user_email: { type: "string", format: "email" }
+                  }
+                },
+                example: { user_email: "user@example.com" }
+              }
+            }
+          },
+          responses: {
+            "200": {
+              description: "Authorization status",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      authorized: { type: "boolean" },
+                      subscription_status: { type: "string", enum: ["ACTIVE", "PAUSED", "CANCELLED", "PENDING"], nullable: true }
+                    }
+                  },
+                  example: { authorized: true, subscription_status: "ACTIVE" }
+                }
+              }
+            },
+            "401": { description: "Invalid or missing API key" }
+          }
+        }
+      }
+    },
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          description: "OAuth2 access token from /api/oauth/token"
+        },
+        apiKeyAuth: {
+          type: "http",
+          scheme: "bearer",
+          description: "App API key (generated in Admin > API Keys)"
+        }
+      }
+    }
+  };
+
+  const openApiSpecString = JSON.stringify(openApiSpec, null, 2);
+
   return (
     <div className="space-y-6">
       <Card className="border-primary/20 bg-primary/5">
@@ -1315,6 +1617,52 @@ Body: {
           <p className="text-xs text-muted-foreground">
             This checklist contains all the steps needed to integrate a new service. Select an app below to see credentials and code examples pre-filled.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card className="border-blue-500/20 bg-blue-500/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileJson className="h-5 w-5" />
+            OpenAPI Specification (Machine-Readable)
+          </CardTitle>
+          <CardDescription>
+            Complete OpenAPI 3.0 spec for AI tools and API clients - importable into Postman, Swagger UI, etc.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="relative">
+            <pre className="p-4 rounded-lg bg-background border overflow-x-auto text-xs font-mono max-h-72 overflow-y-auto">
+              {openApiSpecString}
+            </pre>
+            <div className="absolute top-2 right-2 flex gap-2">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => copyToClipboard(openApiSpecString, "openapi")}
+                data-testid="button-copy-openapi"
+              >
+                {copiedField === "openapi" ? (
+                  <>
+                    <Check className="h-4 w-4 mr-1" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4 mr-1" />
+                    Copy JSON
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+          <div className="flex items-start gap-2 p-3 bg-muted rounded-lg">
+            <Info className="h-4 w-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+            <div className="text-xs text-muted-foreground">
+              <p className="font-medium mb-1">For Replit Agent Integration:</p>
+              <p>Paste this OpenAPI spec when instructing the agent to integrate with Credits Hub. It provides exact endpoint definitions, request/response schemas, and authentication requirements that AI tools can parse precisely.</p>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
