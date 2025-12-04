@@ -244,6 +244,26 @@ export const oauthAccessTokens = pgTable("oauth_access_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const oauthAuditLogs = pgTable("oauth_audit_logs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  traceId: text("trace_id").notNull(),
+  event: text("event").notNull(),
+  clientId: text("client_id"),
+  appName: text("app_name"),
+  userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+  userEmail: text("user_email"),
+  redirectUri: text("redirect_uri"),
+  scope: text("scope"),
+  status: text("status").notNull(),
+  errorCode: text("error_code"),
+  errorMessage: text("error_message"),
+  details: text("details"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  durationMs: bigint("duration_ms", { mode: "number" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const usersRelations = relations(users, ({ one, many }) => ({
   wallet: one(wallets, { fields: [users.id], references: [wallets.userId] }),
   paymentMethods: many(paymentMethods),
@@ -318,6 +338,10 @@ export const oauthAuthorizationCodesRelations = relations(oauthAuthorizationCode
 export const oauthAccessTokensRelations = relations(oauthAccessTokens, ({ one }) => ({
   user: one(users, { fields: [oauthAccessTokens.userId], references: [users.id] }),
   app: one(apps, { fields: [oauthAccessTokens.appId], references: [apps.id] }),
+}));
+
+export const oauthAuditLogsRelations = relations(oauthAuditLogs, ({ one }) => ({
+  user: one(users, { fields: [oauthAuditLogs.userId], references: [users.id] }),
 }));
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -422,6 +446,11 @@ export const insertOauthAccessTokenSchema = createInsertSchema(oauthAccessTokens
   revokedAt: true,
 });
 
+export const insertOauthAuditLogSchema = createInsertSchema(oauthAuditLogs).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const fundWalletSchema = z.object({
   amountCents: z.number().min(100, "Minimum amount is $1.00"),
   paymentMethodId: z.string().uuid(),
@@ -464,3 +493,5 @@ export type OauthAuthorizationCode = typeof oauthAuthorizationCodes.$inferSelect
 export type InsertOauthAuthorizationCode = z.infer<typeof insertOauthAuthorizationCodeSchema>;
 export type OauthAccessToken = typeof oauthAccessTokens.$inferSelect;
 export type InsertOauthAccessToken = z.infer<typeof insertOauthAccessTokenSchema>;
+export type OauthAuditLog = typeof oauthAuditLogs.$inferSelect;
+export type InsertOauthAuditLog = z.infer<typeof insertOauthAuditLogSchema>;
