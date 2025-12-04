@@ -1592,7 +1592,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id" });
       }
 
-      if (redirect_uri !== appRecord.callbackUrl) {
+      // Normalize URLs for comparison (remove trailing slashes, lowercase domain)
+      const normalizeUrl = (url: string): string => {
+        try {
+          const parsed = new URL(url);
+          parsed.hostname = parsed.hostname.toLowerCase();
+          // Remove trailing slash from pathname (unless it's just "/")
+          if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+            parsed.pathname = parsed.pathname.slice(0, -1);
+          }
+          return parsed.toString();
+        } catch {
+          return url.toLowerCase().replace(/\/$/, '');
+        }
+      };
+
+      const normalizedRedirectUri = normalizeUrl(redirect_uri);
+      const normalizedCallbackUrl = normalizeUrl(appRecord.callbackUrl);
+      
+      console.log('[OAuth] Redirect URI comparison:', {
+        received: redirect_uri,
+        registered: appRecord.callbackUrl,
+        normalizedReceived: normalizedRedirectUri,
+        normalizedRegistered: normalizedCallbackUrl,
+        match: normalizedRedirectUri === normalizedCallbackUrl
+      });
+
+      if (normalizedRedirectUri !== normalizedCallbackUrl) {
         return res.status(400).json({ error: "invalid_redirect_uri", error_description: "Redirect URI does not match registered callback" });
       }
 
