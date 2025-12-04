@@ -55,6 +55,56 @@ function generateClientCredentials(): { clientId: string; clientSecret: string }
   };
 }
 
+function generateTraceId(): string {
+  return `oauth_${Date.now()}_${randomBytes(8).toString("hex")}`;
+}
+
+interface OAuthAuditContext {
+  traceId: string;
+  startTime: number;
+  clientId?: string;
+  appName?: string;
+  userId?: string;
+  userEmail?: string;
+  redirectUri?: string;
+  scope?: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+async function logOAuthEvent(
+  ctx: OAuthAuditContext,
+  event: string,
+  status: "SUCCESS" | "FAILURE" | "INFO",
+  errorCode?: string,
+  errorMessage?: string,
+  details?: Record<string, unknown>
+): Promise<void> {
+  try {
+    const durationMs = Date.now() - ctx.startTime;
+    await storage.createOauthAuditLog({
+      traceId: ctx.traceId,
+      event,
+      clientId: ctx.clientId || null,
+      appName: ctx.appName || null,
+      userId: ctx.userId || null,
+      userEmail: ctx.userEmail || null,
+      redirectUri: ctx.redirectUri || null,
+      scope: ctx.scope || null,
+      status,
+      errorCode: errorCode || null,
+      errorMessage: errorMessage || null,
+      details: details ? JSON.stringify(details) : null,
+      ipAddress: ctx.ipAddress || null,
+      userAgent: ctx.userAgent || null,
+      durationMs,
+    });
+    console.log(`[OAuth Audit] ${ctx.traceId} | ${event} | ${status}${errorCode ? ` | ${errorCode}` : ''}`);
+  } catch (error) {
+    console.error('[OAuth Audit] Failed to log event:', error);
+  }
+}
+
 function prepareSafeUserResponse(user: { 
   id: string; 
   email: string; 
@@ -1579,6 +1629,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.get("/api/oauth/authorize", authMiddleware, async (req: AuthRequest, res) => {
+    const traceId = generateTraceId();
+    const ctx: OAuthAuditContext = {
+      traceId,
+      startTime: Date.now(),
+      ipAddress: req.ip || req.socket.remoteAddress || undefined,
+      userAgent: req.headers['user-agent'] || undefined,
+    };
+
     try {
       const { 
         client_id, 
@@ -1598,37 +1656,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         code_challenge_method?: string;
       };
 
-      console.log('[OAuth authorize] Request received:', {
-        client_id,
-        redirect_uri,
+      ctx.clientId = client_id;
+      ctx.redirectUri = redirect_uri;
+      ctx.scope = scope;
+      ctx.userId = req.user?.id;
+      ctx.userEmail = req.user?.email;
+
+      await logOAuthEvent(ctx, "AUTHORIZE_REQUEST", "INFO", undefined, undefined, {
         response_type,
-        scope,
-        state: state ? '[present]' : '[missing]',
-        code_challenge: code_challenge ? '[present]' : '[missing]',
+        has_state: !!state,
+        has_code_challenge: !!code_challenge,
         code_challenge_method,
-        userId: req.user?.id,
       });
 
       if (!client_id || !redirect_uri) {
-        console.log('[OAuth authorize] Missing required params:', { client_id: !!client_id, redirect_uri: !!redirect_uri });
-        return res.status(400).json({ error: "invalid_request", error_description: "client_id and redirect_uri are required" });
+        await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_request", "client_id and redirect_uri are required");
+        return res.status(400).json({ error: "invalid_request", error_description: "client_id and redirect_uri are required", trace_id: traceId });
       }
 
       if (response_type !== "code") {
-        return res.status(400).json({ error: "unsupported_response_type", error_description: "Only response_type=code is supported" });
+        await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "unsupported_response_type", "Only response_type=code is supported");
+        return res.status(400).json({ error: "unsupported_response_type", error_description: "Only response_type=code is supported", trace_id: traceId });
       }
 
       const appRecord = await storage.getAppByClientId(client_id);
       if (!appRecord) {
-        return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id" });
+        await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_client", "Unknown client_id");
+        return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
       }
 
-      // Normalize URLs for comparison (remove trailing slashes, lowercase domain)
+      ctx.appName = appRecord.name;
+      await logOAuthEvent(ctx, "APP_RESOLVED", "INFO", undefined, undefined, { appId: appRecord.id, appName: appRecord.name });
+
       const normalizeUrl = (url: string): string => {
         try {
           const parsed = new URL(url);
           parsed.hostname = parsed.hostname.toLowerCase();
-          // Remove trailing slash from pathname (unless it's just "/")
           if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
             parsed.pathname = parsed.pathname.slice(0, -1);
           }
@@ -1639,37 +1702,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
 
       const normalizedRedirectUri = normalizeUrl(redirect_uri);
-      
-      // Build list of all allowed callback URLs (legacy single URL + new array)
       const allAllowedUrls = [
         appRecord.callbackUrl,
         ...(appRecord.allowedCallbackUrls || [])
-      ].filter((url, index, self) => url && self.indexOf(url) === index); // Remove duplicates and empty
+      ].filter((url, index, self) => url && self.indexOf(url) === index);
       
-      // Check if redirect_uri matches any allowed URL
       const isAllowed = allAllowedUrls.some(allowedUrl => {
         const normalizedAllowed = normalizeUrl(allowedUrl);
         return normalizedRedirectUri === normalizedAllowed;
       });
-      
-      console.log('[OAuth] Redirect URI comparison:', {
-        received: redirect_uri,
-        normalizedReceived: normalizedRedirectUri,
-        allowedUrls: allAllowedUrls,
-        match: isAllowed
-      });
 
       if (!isAllowed) {
-        return res.status(400).json({ error: "invalid_redirect_uri", error_description: "Redirect URI does not match registered callback" });
+        await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_redirect_uri", "Redirect URI does not match registered callback", {
+          received: redirect_uri,
+          normalized: normalizedRedirectUri,
+          allowed: allAllowedUrls,
+        });
+        return res.status(400).json({ error: "invalid_redirect_uri", error_description: "Redirect URI does not match registered callback", trace_id: traceId });
       }
 
+      await logOAuthEvent(ctx, "REDIRECT_URI_VALIDATED", "INFO");
+
       if (!code_challenge) {
-        return res.status(400).json({ error: "invalid_request", error_description: "PKCE code_challenge is required for security" });
+        await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_request", "PKCE code_challenge is required");
+        return res.status(400).json({ error: "invalid_request", error_description: "PKCE code_challenge is required for security", trace_id: traceId });
       }
 
       if (code_challenge_method !== "S256") {
-        return res.status(400).json({ error: "invalid_request", error_description: "code_challenge_method must be S256" });
+        await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_request", "code_challenge_method must be S256");
+        return res.status(400).json({ error: "invalid_request", error_description: "code_challenge_method must be S256", trace_id: traceId });
       }
+
+      await logOAuthEvent(ctx, "PKCE_VALIDATED", "INFO");
 
       const authCode = randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -1686,86 +1750,130 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         expiresAt,
       });
 
+      await logOAuthEvent(ctx, "CODE_CREATED", "SUCCESS", undefined, undefined, { codePrefix: authCode.substring(0, 8) });
+
       const redirectUrl = new URL(redirect_uri);
       redirectUrl.searchParams.append("code", authCode);
       if (state) {
         redirectUrl.searchParams.append("state", state);
       }
 
-      const response: { redirect_uri: string; code: string; state?: string } = { 
+      const response: { redirect_uri: string; code: string; state?: string; trace_id: string } = { 
         redirect_uri: redirectUrl.toString(),
         code: authCode,
+        trace_id: traceId,
       };
       if (state) {
         response.state = state;
       }
+
+      await logOAuthEvent(ctx, "AUTHORIZE_SUCCESS", "SUCCESS");
       res.json(response);
     } catch (error) {
+      await logOAuthEvent(ctx, "AUTHORIZE_ERROR", "FAILURE", "server_error", String(error));
       console.error("OAuth authorize error:", error);
-      res.status(500).json({ error: "server_error", error_description: "Authorization failed" });
+      res.status(500).json({ error: "server_error", error_description: "Authorization failed", trace_id: traceId });
     }
   });
 
   app.post("/api/oauth/token", async (req, res) => {
+    const traceId = generateTraceId();
+    const ctx: OAuthAuditContext = {
+      traceId,
+      startTime: Date.now(),
+      ipAddress: req.ip || req.socket.remoteAddress || undefined,
+      userAgent: req.headers['user-agent'] || undefined,
+    };
+
     try {
       const { grant_type, code, redirect_uri, client_id, client_secret, code_verifier } = req.body;
 
-      console.log('[OAuth token] Request received:', {
+      ctx.clientId = client_id;
+      ctx.redirectUri = redirect_uri;
+
+      await logOAuthEvent(ctx, "TOKEN_REQUEST", "INFO", undefined, undefined, {
         grant_type,
-        code: code ? `${code.substring(0, 10)}...` : '[missing]',
-        redirect_uri,
-        client_id,
-        client_secret: client_secret ? '[present]' : '[missing]',
-        code_verifier: code_verifier ? '[present]' : '[missing]',
+        has_code: !!code,
+        has_client_secret: !!client_secret,
+        has_code_verifier: !!code_verifier,
       });
 
       if (grant_type !== "authorization_code") {
-        console.log('[OAuth token] Unsupported grant type:', grant_type);
-        return res.status(400).json({ error: "unsupported_grant_type", error_description: "Only authorization_code grant is supported" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "unsupported_grant_type", "Only authorization_code grant is supported");
+        return res.status(400).json({ error: "unsupported_grant_type", error_description: "Only authorization_code grant is supported", trace_id: traceId });
       }
 
       if (!code || !redirect_uri || !client_id) {
-        console.log('[OAuth token] Missing required params:', { code: !!code, redirect_uri: !!redirect_uri, client_id: !!client_id });
-        return res.status(400).json({ error: "invalid_request", error_description: "code, redirect_uri, and client_id are required" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_request", "code, redirect_uri, and client_id are required");
+        return res.status(400).json({ error: "invalid_request", error_description: "code, redirect_uri, and client_id are required", trace_id: traceId });
       }
 
       const appRecord = await storage.getAppByClientId(client_id);
       if (!appRecord) {
-        return res.status(401).json({ error: "invalid_client", error_description: "Unknown client_id" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_client", "Unknown client_id");
+        return res.status(401).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
       }
 
+      ctx.appName = appRecord.name;
+      await logOAuthEvent(ctx, "CLIENT_VALIDATED", "INFO", undefined, undefined, { appName: appRecord.name });
+
       if (appRecord.clientSecret && appRecord.clientSecret !== client_secret) {
-        return res.status(401).json({ error: "invalid_client", error_description: "Client authentication failed" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_client", "Client authentication failed");
+        return res.status(401).json({ error: "invalid_client", error_description: "Client authentication failed", trace_id: traceId });
       }
+
+      await logOAuthEvent(ctx, "CLIENT_SECRET_VALIDATED", "INFO");
 
       const authCode = await storage.getOauthAuthorizationCode(code);
       if (!authCode) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "Invalid authorization code" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "Invalid authorization code");
+        return res.status(400).json({ error: "invalid_grant", error_description: "Invalid authorization code", trace_id: traceId });
       }
+
+      ctx.userId = authCode.userId;
+      const user = await storage.getUser(authCode.userId);
+      ctx.userEmail = user?.email;
+      ctx.scope = authCode.scope || undefined;
+
+      await logOAuthEvent(ctx, "CODE_FOUND", "INFO", undefined, undefined, { codePrefix: code.substring(0, 8) });
 
       const wasMarkedUsed = await storage.markOauthCodeUsed(authCode.id);
       if (!wasMarkedUsed) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code already used" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "Authorization code already used");
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code already used", trace_id: traceId });
       }
 
       if (authCode.expiresAt < new Date()) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code expired" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "Authorization code expired", {
+          expiresAt: authCode.expiresAt.toISOString(),
+          now: new Date().toISOString(),
+        });
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code expired", trace_id: traceId });
       }
 
       if (authCode.appId !== appRecord.id) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code was not issued for this client" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "Authorization code was not issued for this client");
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code was not issued for this client", trace_id: traceId });
       }
 
       if (authCode.redirectUri !== redirect_uri) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "Redirect URI mismatch" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "Redirect URI mismatch", {
+          expected: authCode.redirectUri,
+          received: redirect_uri,
+        });
+        return res.status(400).json({ error: "invalid_grant", error_description: "Redirect URI mismatch", trace_id: traceId });
       }
 
+      await logOAuthEvent(ctx, "CODE_VALIDATED", "INFO");
+
       if (!authCode.codeChallenge) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code missing PKCE challenge" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "Authorization code missing PKCE challenge");
+        return res.status(400).json({ error: "invalid_grant", error_description: "Authorization code missing PKCE challenge", trace_id: traceId });
       }
 
       if (!code_verifier) {
-        return res.status(400).json({ error: "invalid_request", error_description: "code_verifier is required" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_request", "code_verifier is required");
+        return res.status(400).json({ error: "invalid_request", error_description: "code_verifier is required", trace_id: traceId });
       }
 
       const expectedChallenge = createHash("sha256")
@@ -1773,8 +1881,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .digest("base64url");
 
       if (authCode.codeChallenge !== expectedChallenge) {
-        return res.status(400).json({ error: "invalid_grant", error_description: "PKCE code_verifier mismatch" });
+        await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_grant", "PKCE code_verifier mismatch");
+        return res.status(400).json({ error: "invalid_grant", error_description: "PKCE code_verifier mismatch", trace_id: traceId });
       }
+
+      await logOAuthEvent(ctx, "PKCE_VERIFIED", "INFO");
 
       const accessToken = randomBytes(32).toString("hex");
       const accessTokenHash = hashToken(accessToken);
@@ -1788,13 +1899,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         expiresAt: accessTokenExpiresAt,
       });
 
-      const user = await storage.getUser(authCode.userId);
+      await logOAuthEvent(ctx, "TOKEN_ISSUED", "SUCCESS", undefined, undefined, { tokenPrefix: accessToken.substring(0, 8) });
 
       res.json({
         access_token: accessToken,
         token_type: "Bearer",
         expires_in: 3600,
         scope: authCode.scope || null,
+        trace_id: traceId,
         user: user ? {
           id: user.id,
           email: user.email,
@@ -1802,8 +1914,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         } : null,
       });
     } catch (error) {
+      await logOAuthEvent(ctx, "TOKEN_ERROR", "FAILURE", "server_error", String(error));
       console.error("OAuth token error:", error);
-      res.status(500).json({ error: "server_error", error_description: "Token exchange failed" });
+      res.status(500).json({ error: "server_error", error_description: "Token exchange failed", trace_id: traceId });
     }
   });
 

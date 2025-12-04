@@ -14,6 +14,7 @@ import {
   smsOtpCodes,
   oauthAuthorizationCodes,
   oauthAccessTokens,
+  oauthAuditLogs,
   type User,
   type InsertUser,
   type Wallet,
@@ -43,6 +44,8 @@ import {
   type InsertOauthAuthorizationCode,
   type OauthAccessToken,
   type InsertOauthAccessToken,
+  type OauthAuditLog,
+  type InsertOauthAuditLog,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -146,6 +149,10 @@ export interface IStorage {
   revokeOauthAccessToken(id: string): Promise<void>;
   revokeOauthAccessTokensByUserId(userId: string, appId?: string): Promise<void>;
   deleteExpiredAccessTokens(): Promise<void>;
+
+  createOauthAuditLog(log: Omit<OauthAuditLog, "id" | "createdAt">): Promise<OauthAuditLog>;
+  getOauthAuditLogs(limit?: number, clientId?: string, traceId?: string): Promise<OauthAuditLog[]>;
+  getOauthAuditLogsByTraceId(traceId: string): Promise<OauthAuditLog[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -748,6 +755,33 @@ export class DatabaseStorage implements IStorage {
     await db
       .delete(oauthAccessTokens)
       .where(sql`${oauthAccessTokens.expiresAt} < NOW()`);
+  }
+
+  async createOauthAuditLog(log: Omit<OauthAuditLog, "id" | "createdAt">): Promise<OauthAuditLog> {
+    const [created] = await db.insert(oauthAuditLogs).values(log).returning();
+    return created;
+  }
+
+  async getOauthAuditLogs(limit = 100, clientId?: string, traceId?: string): Promise<OauthAuditLog[]> {
+    let query = db.select().from(oauthAuditLogs);
+    
+    if (clientId && traceId) {
+      query = query.where(and(eq(oauthAuditLogs.clientId, clientId), eq(oauthAuditLogs.traceId, traceId))) as typeof query;
+    } else if (clientId) {
+      query = query.where(eq(oauthAuditLogs.clientId, clientId)) as typeof query;
+    } else if (traceId) {
+      query = query.where(eq(oauthAuditLogs.traceId, traceId)) as typeof query;
+    }
+    
+    return query.orderBy(desc(oauthAuditLogs.createdAt)).limit(limit);
+  }
+
+  async getOauthAuditLogsByTraceId(traceId: string): Promise<OauthAuditLog[]> {
+    return db
+      .select()
+      .from(oauthAuditLogs)
+      .where(eq(oauthAuditLogs.traceId, traceId))
+      .orderBy(oauthAuditLogs.createdAt);
   }
 }
 
