@@ -59,6 +59,7 @@ import {
   Terminal,
   ArrowRight,
   Edit,
+  Globe,
 } from "lucide-react";
 import type { User, App, Wallet } from "@shared/schema";
 
@@ -517,69 +518,85 @@ function AppsTab() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="callbackUrl">Primary Callback URL</Label>
-                  <Input
-                    id="callbackUrl"
-                    value={formData.callbackUrl}
-                    onChange={(e) => setFormData({ ...formData, callbackUrl: e.target.value })}
-                    placeholder="https://myapp.com/auth/callback"
-                    data-testid="input-app-callback"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Production callback URL for OAuth redirects
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Additional Callback URLs (Optional)</Label>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setFormData({
-                        ...formData,
-                        additionalCallbackUrls: [...formData.additionalCallbackUrls, ""]
-                      })}
-                      data-testid="button-add-callback-url"
-                    >
-                      <Plus className="h-3 w-3 mr-1" />
-                      Add URL
-                    </Button>
+                <div className="space-y-4 rounded-lg border p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Globe className="h-4 w-4" />
+                    OAuth Callback URLs
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Add development or staging URLs for testing
+                    Add callback URLs for both production and development environments. The OAuth flow will accept redirects to any of these URLs.
                   </p>
-                  {formData.additionalCallbackUrls.map((url, index) => (
-                    <div key={index} className="flex gap-2">
-                      <Input
-                        value={url}
-                        onChange={(e) => {
-                          const newUrls = [...formData.additionalCallbackUrls];
-                          newUrls[index] = e.target.value;
-                          setFormData({ ...formData, additionalCallbackUrls: newUrls });
-                        }}
-                        placeholder="https://dev.myapp.com/auth/callback"
-                        data-testid={`input-additional-callback-${index}`}
-                      />
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="callbackUrl" className="flex items-center gap-2">
+                      <Badge variant="default" className="text-xs">Production</Badge>
+                      Callback URL
+                    </Label>
+                    <Input
+                      id="callbackUrl"
+                      value={formData.callbackUrl}
+                      onChange={(e) => setFormData({ ...formData, callbackUrl: e.target.value })}
+                      placeholder="https://yourapp.com/api/auth/callback"
+                      data-testid="input-app-callback"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Your live production domain (e.g., https://yourapp.com/api/auth/callback)
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="flex items-center gap-2">
+                        <Badge variant="secondary" className="text-xs">Development</Badge>
+                        Additional URLs
+                      </Label>
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          const newUrls = formData.additionalCallbackUrls.filter((_, i) => i !== index);
-                          setFormData({
-                            ...formData,
-                            additionalCallbackUrls: newUrls.length > 0 ? newUrls : [""]
-                          });
-                        }}
-                        data-testid={`button-remove-callback-${index}`}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setFormData({
+                          ...formData,
+                          additionalCallbackUrls: [...formData.additionalCallbackUrls, ""]
+                        })}
+                        data-testid="button-add-callback-url"
                       >
-                        <Trash2 className="h-4 w-4 text-muted-foreground" />
+                        <Plus className="h-3 w-3 mr-1" />
+                        Add URL
                       </Button>
                     </div>
-                  ))}
+                    <p className="text-xs text-muted-foreground">
+                      Add your Replit dev URL or staging environment URLs for testing
+                    </p>
+                    {formData.additionalCallbackUrls.map((url, index) => (
+                      <div key={index} className="flex gap-2">
+                        <Input
+                          value={url}
+                          onChange={(e) => {
+                            const newUrls = [...formData.additionalCallbackUrls];
+                            newUrls[index] = e.target.value;
+                            setFormData({ ...formData, additionalCallbackUrls: newUrls });
+                          }}
+                          placeholder="https://xxx.replit.dev/api/auth/callback"
+                          data-testid={`input-additional-callback-${index}`}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const newUrls = formData.additionalCallbackUrls.filter((_, i) => i !== index);
+                            setFormData({
+                              ...formData,
+                              additionalCallbackUrls: newUrls.length > 0 ? newUrls : [""]
+                            });
+                          }}
+                          data-testid={`button-remove-callback-${index}`}
+                        >
+                          <Trash2 className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -769,69 +786,85 @@ function AppsTab() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="edit-callback-url">Primary Callback URL</Label>
-              <Input
-                id="edit-callback-url"
-                value={editFormData.callbackUrl}
-                onChange={(e) => setEditFormData({ ...editFormData, callbackUrl: e.target.value })}
-                placeholder="https://myapp.com/auth/callback"
-                data-testid="input-edit-callback-url"
-              />
-              <p className="text-xs text-muted-foreground">
-                Production callback URL for OAuth redirects
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label>Additional Callback URLs</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEditFormData({
-                    ...editFormData,
-                    additionalCallbackUrls: [...editFormData.additionalCallbackUrls, ""]
-                  })}
-                  data-testid="button-edit-add-callback-url"
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add URL
-                </Button>
+            <div className="space-y-4 rounded-lg border p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Globe className="h-4 w-4" />
+                OAuth Callback URLs
               </div>
               <p className="text-xs text-muted-foreground">
-                Add development or staging URLs for testing
+                Add callback URLs for both production and development environments.
               </p>
-              {editFormData.additionalCallbackUrls.map((url, index) => (
-                <div key={index} className="flex gap-2">
-                  <Input
-                    value={url}
-                    onChange={(e) => {
-                      const newUrls = [...editFormData.additionalCallbackUrls];
-                      newUrls[index] = e.target.value;
-                      setEditFormData({ ...editFormData, additionalCallbackUrls: newUrls });
-                    }}
-                    placeholder="https://dev.myapp.com/auth/callback"
-                    data-testid={`input-edit-additional-callback-${index}`}
-                  />
+              
+              <div className="space-y-2">
+                <Label htmlFor="edit-callback-url" className="flex items-center gap-2">
+                  <Badge variant="default" className="text-xs">Production</Badge>
+                  Callback URL
+                </Label>
+                <Input
+                  id="edit-callback-url"
+                  value={editFormData.callbackUrl}
+                  onChange={(e) => setEditFormData({ ...editFormData, callbackUrl: e.target.value })}
+                  placeholder="https://yourapp.com/api/auth/callback"
+                  data-testid="input-edit-callback-url"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Your live production domain
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs">Development</Badge>
+                    Additional URLs
+                  </Label>
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => {
-                      const newUrls = editFormData.additionalCallbackUrls.filter((_, i) => i !== index);
-                      setEditFormData({
-                        ...editFormData,
-                        additionalCallbackUrls: newUrls.length > 0 ? newUrls : [""]
-                      });
-                    }}
-                    data-testid={`button-edit-remove-callback-${index}`}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditFormData({
+                      ...editFormData,
+                      additionalCallbackUrls: [...editFormData.additionalCallbackUrls, ""]
+                    })}
+                    data-testid="button-edit-add-callback-url"
                   >
-                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add URL
                   </Button>
                 </div>
-              ))}
+                <p className="text-xs text-muted-foreground">
+                  Add your Replit dev URL or staging environment URLs
+                </p>
+                {editFormData.additionalCallbackUrls.map((url, index) => (
+                  <div key={index} className="flex gap-2">
+                    <Input
+                      value={url}
+                      onChange={(e) => {
+                        const newUrls = [...editFormData.additionalCallbackUrls];
+                        newUrls[index] = e.target.value;
+                        setEditFormData({ ...editFormData, additionalCallbackUrls: newUrls });
+                      }}
+                      placeholder="https://xxx.replit.dev/api/auth/callback"
+                      data-testid={`input-edit-additional-callback-${index}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        const newUrls = editFormData.additionalCallbackUrls.filter((_, i) => i !== index);
+                        setEditFormData({
+                          ...editFormData,
+                          additionalCallbackUrls: newUrls.length > 0 ? newUrls : [""]
+                        });
+                      }}
+                      data-testid={`button-edit-remove-callback-${index}`}
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-2">
