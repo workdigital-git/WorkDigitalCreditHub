@@ -355,11 +355,13 @@ function AppsTab() {
     slug: "",
     description: "",
     callbackUrl: "",
+    additionalCallbackUrls: [""],
     pricingModel: "per_call",
   });
 
   const [editFormData, setEditFormData] = useState({
     callbackUrl: "",
+    additionalCallbackUrls: [""] as string[],
     description: "",
     pricingModel: "",
   });
@@ -370,7 +372,19 @@ function AppsTab() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest("POST", "/api/admin/apps", formData);
+      const allCallbackUrls = [
+        formData.callbackUrl,
+        ...formData.additionalCallbackUrls.filter(url => url.trim())
+      ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
+      
+      return apiRequest("POST", "/api/admin/apps", {
+        name: formData.name,
+        slug: formData.slug,
+        description: formData.description,
+        callbackUrl: formData.callbackUrl,
+        allowedCallbackUrls: allCallbackUrls,
+        pricingModel: formData.pricingModel,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/apps"] });
@@ -382,6 +396,7 @@ function AppsTab() {
         slug: "",
         description: "",
         callbackUrl: "",
+        additionalCallbackUrls: [""],
         pricingModel: "per_call",
       });
     },
@@ -397,7 +412,17 @@ function AppsTab() {
   const updateMutation = useMutation({
     mutationFn: async () => {
       if (!editApp) throw new Error("No app selected");
-      return apiRequest("PATCH", `/api/admin/apps/${editApp.id}`, editFormData);
+      const allCallbackUrls = [
+        editFormData.callbackUrl,
+        ...editFormData.additionalCallbackUrls.filter(url => url.trim())
+      ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
+      
+      return apiRequest("PATCH", `/api/admin/apps/${editApp.id}`, {
+        callbackUrl: editFormData.callbackUrl,
+        allowedCallbackUrls: allCallbackUrls,
+        description: editFormData.description,
+        pricingModel: editFormData.pricingModel,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/apps"] });
@@ -414,8 +439,10 @@ function AppsTab() {
   });
 
   const openEditDialog = (app: App) => {
+    const additionalUrls = (app.allowedCallbackUrls || []).filter(url => url !== app.callbackUrl);
     setEditFormData({
       callbackUrl: app.callbackUrl,
+      additionalCallbackUrls: additionalUrls.length > 0 ? additionalUrls : [""],
       description: app.description || "",
       pricingModel: app.pricingModel,
     });
@@ -491,7 +518,7 @@ function AppsTab() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="callbackUrl">Callback URL</Label>
+                  <Label htmlFor="callbackUrl">Primary Callback URL</Label>
                   <Input
                     id="callbackUrl"
                     value={formData.callbackUrl}
@@ -499,6 +526,60 @@ function AppsTab() {
                     placeholder="https://myapp.com/auth/callback"
                     data-testid="input-app-callback"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Production callback URL for OAuth redirects
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Additional Callback URLs (Optional)</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFormData({
+                        ...formData,
+                        additionalCallbackUrls: [...formData.additionalCallbackUrls, ""]
+                      })}
+                      data-testid="button-add-callback-url"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add URL
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Add development or staging URLs for testing
+                  </p>
+                  {formData.additionalCallbackUrls.map((url, index) => (
+                    <div key={index} className="flex gap-2">
+                      <Input
+                        value={url}
+                        onChange={(e) => {
+                          const newUrls = [...formData.additionalCallbackUrls];
+                          newUrls[index] = e.target.value;
+                          setFormData({ ...formData, additionalCallbackUrls: newUrls });
+                        }}
+                        placeholder="https://dev.myapp.com/auth/callback"
+                        data-testid={`input-additional-callback-${index}`}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          const newUrls = formData.additionalCallbackUrls.filter((_, i) => i !== index);
+                          setFormData({
+                            ...formData,
+                            additionalCallbackUrls: newUrls.length > 0 ? newUrls : [""]
+                          });
+                        }}
+                        data-testid={`button-remove-callback-${index}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="space-y-2">
@@ -689,7 +770,7 @@ function AppsTab() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="edit-callback-url">Callback URL</Label>
+              <Label htmlFor="edit-callback-url">Primary Callback URL</Label>
               <Input
                 id="edit-callback-url"
                 value={editFormData.callbackUrl}
@@ -698,8 +779,59 @@ function AppsTab() {
                 data-testid="input-edit-callback-url"
               />
               <p className="text-xs text-muted-foreground">
-                The URL where users will be redirected after authentication
+                Production callback URL for OAuth redirects
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Additional Callback URLs</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditFormData({
+                    ...editFormData,
+                    additionalCallbackUrls: [...editFormData.additionalCallbackUrls, ""]
+                  })}
+                  data-testid="button-edit-add-callback-url"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add URL
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Add development or staging URLs for testing
+              </p>
+              {editFormData.additionalCallbackUrls.map((url, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input
+                    value={url}
+                    onChange={(e) => {
+                      const newUrls = [...editFormData.additionalCallbackUrls];
+                      newUrls[index] = e.target.value;
+                      setEditFormData({ ...editFormData, additionalCallbackUrls: newUrls });
+                    }}
+                    placeholder="https://dev.myapp.com/auth/callback"
+                    data-testid={`input-edit-additional-callback-${index}`}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      const newUrls = editFormData.additionalCallbackUrls.filter((_, i) => i !== index);
+                      setEditFormData({
+                        ...editFormData,
+                        additionalCallbackUrls: newUrls.length > 0 ? newUrls : [""]
+                      });
+                    }}
+                    data-testid={`button-edit-remove-callback-${index}`}
+                  >
+                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
             </div>
 
             <div className="space-y-2">

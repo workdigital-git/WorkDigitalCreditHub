@@ -1272,6 +1272,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         slug: appData.slug,
         description: appData.description,
         callbackUrl: appData.callbackUrl,
+        allowedCallbackUrls: appData.allowedCallbackUrls || [appData.callbackUrl],
         pricingModel: appData.pricingModel,
         billingCycle: appData.billingCycle || null,
         monthlyPriceCents: appData.monthlyPriceCents || 0,
@@ -1293,7 +1294,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/admin/apps/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { callbackUrl, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
+      const { callbackUrl, allowedCallbackUrls, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
 
       const existingApp = await storage.getApp(id);
       if (!existingApp) {
@@ -1307,6 +1308,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           return res.status(400).json({ message: "Invalid callback URL" });
         }
         updateData.callbackUrl = callbackUrl;
+      }
+      
+      if (allowedCallbackUrls !== undefined) {
+        if (!Array.isArray(allowedCallbackUrls)) {
+          return res.status(400).json({ message: "allowedCallbackUrls must be an array" });
+        }
+        // Validate each URL
+        for (const url of allowedCallbackUrls) {
+          if (typeof url !== "string" || !url.startsWith("http")) {
+            return res.status(400).json({ message: "Each callback URL must be a valid HTTP/HTTPS URL" });
+          }
+        }
+        updateData.allowedCallbackUrls = allowedCallbackUrls;
       }
       
       if (description !== undefined) {
@@ -1608,17 +1622,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       };
 
       const normalizedRedirectUri = normalizeUrl(redirect_uri);
-      const normalizedCallbackUrl = normalizeUrl(appRecord.callbackUrl);
+      
+      // Build list of all allowed callback URLs (legacy single URL + new array)
+      const allAllowedUrls = [
+        appRecord.callbackUrl,
+        ...(appRecord.allowedCallbackUrls || [])
+      ].filter((url, index, self) => url && self.indexOf(url) === index); // Remove duplicates and empty
+      
+      // Check if redirect_uri matches any allowed URL
+      const isAllowed = allAllowedUrls.some(allowedUrl => {
+        const normalizedAllowed = normalizeUrl(allowedUrl);
+        return normalizedRedirectUri === normalizedAllowed;
+      });
       
       console.log('[OAuth] Redirect URI comparison:', {
         received: redirect_uri,
-        registered: appRecord.callbackUrl,
         normalizedReceived: normalizedRedirectUri,
-        normalizedRegistered: normalizedCallbackUrl,
-        match: normalizedRedirectUri === normalizedCallbackUrl
+        allowedUrls: allAllowedUrls,
+        match: isAllowed
       });
 
-      if (normalizedRedirectUri !== normalizedCallbackUrl) {
+      if (!isAllowed) {
         return res.status(400).json({ error: "invalid_redirect_uri", error_description: "Redirect URI does not match registered callback" });
       }
 
