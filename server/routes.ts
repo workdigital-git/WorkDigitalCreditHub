@@ -1290,6 +1290,72 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.patch("/api/admin/apps/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { callbackUrl, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
+
+      const existingApp = await storage.getApp(id);
+      if (!existingApp) {
+        return res.status(404).json({ message: "App not found" });
+      }
+
+      const updateData: Partial<typeof existingApp> = {};
+      
+      if (callbackUrl !== undefined) {
+        if (typeof callbackUrl !== "string" || !callbackUrl.startsWith("http")) {
+          return res.status(400).json({ message: "Invalid callback URL" });
+        }
+        updateData.callbackUrl = callbackUrl;
+      }
+      
+      if (description !== undefined) {
+        updateData.description = description;
+      }
+      
+      if (pricingModel !== undefined) {
+        if (!["free", "subscription", "per_call", "per_request", "per_minute"].includes(pricingModel)) {
+          return res.status(400).json({ message: "Invalid pricing model" });
+        }
+        updateData.pricingModel = pricingModel;
+      }
+      
+      if (monthlyPriceCents !== undefined) {
+        updateData.monthlyPriceCents = monthlyPriceCents;
+      }
+      
+      if (yearlyPriceCents !== undefined) {
+        updateData.yearlyPriceCents = yearlyPriceCents;
+      }
+      
+      if (perUsePriceCents !== undefined) {
+        updateData.perUsePriceCents = perUsePriceCents;
+      }
+      
+      if (isActive !== undefined) {
+        updateData.isActive = isActive;
+      }
+
+      const updatedApp = await storage.updateApp(id, updateData);
+
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        eventType: "ADMIN_ACTION",
+        entityType: "APP",
+        entityId: id,
+        action: "Updated app settings",
+        details: JSON.stringify({ updatedFields: Object.keys(updateData) }),
+        ipAddress: req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      res.json(updatedApp);
+    } catch (error) {
+      console.error("Update app error:", error);
+      res.status(500).json({ message: "Failed to update app" });
+    }
+  });
+
   app.post("/api/admin/credit-user", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { userId, amountCents, reason } = req.body;

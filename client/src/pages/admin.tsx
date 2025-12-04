@@ -58,6 +58,7 @@ import {
   ExternalLink,
   Terminal,
   ArrowRight,
+  Edit,
 } from "lucide-react";
 import type { User, App, Wallet } from "@shared/schema";
 
@@ -346,6 +347,7 @@ function AppsTab() {
   const { toast } = useToast();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [viewCredentials, setViewCredentials] = useState<App | null>(null);
+  const [editApp, setEditApp] = useState<App | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
@@ -354,6 +356,12 @@ function AppsTab() {
     description: "",
     callbackUrl: "",
     pricingModel: "per_call",
+  });
+
+  const [editFormData, setEditFormData] = useState({
+    callbackUrl: "",
+    description: "",
+    pricingModel: "",
   });
 
   const { data: apps, isLoading } = useQuery<App[]>({
@@ -385,6 +393,34 @@ function AppsTab() {
       });
     },
   });
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      if (!editApp) throw new Error("No app selected");
+      return apiRequest("PATCH", `/api/admin/apps/${editApp.id}`, editFormData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/apps"] });
+      toast({ title: "App updated", description: "The app settings have been saved." });
+      setEditApp(null);
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to update app",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const openEditDialog = (app: App) => {
+    setEditFormData({
+      callbackUrl: app.callbackUrl,
+      description: app.description || "",
+      pricingModel: app.pricingModel,
+    });
+    setEditApp(app);
+  };
 
   const copyToClipboard = async (text: string, field: string) => {
     await navigator.clipboard.writeText(text);
@@ -548,15 +584,26 @@ function AppsTab() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setViewCredentials(app)}
-                        data-testid={`button-view-credentials-${app.id}`}
-                      >
-                        <Eye className="h-4 w-4 mr-2" />
-                        Credentials
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openEditDialog(app)}
+                          data-testid={`button-edit-app-${app.id}`}
+                        >
+                          <Edit className="h-4 w-4 mr-2" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setViewCredentials(app)}
+                          data-testid={`button-view-credentials-${app.id}`}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          Credentials
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -628,6 +675,72 @@ function AppsTab() {
               <Label>Callback URL</Label>
               <Input value={viewCredentials?.callbackUrl || ""} readOnly />
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editApp} onOpenChange={(open) => !open && setEditApp(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit App Settings</DialogTitle>
+            <DialogDescription>
+              Update settings for {editApp?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-callback-url">Callback URL</Label>
+              <Input
+                id="edit-callback-url"
+                value={editFormData.callbackUrl}
+                onChange={(e) => setEditFormData({ ...editFormData, callbackUrl: e.target.value })}
+                placeholder="https://myapp.com/auth/callback"
+                data-testid="input-edit-callback-url"
+              />
+              <p className="text-xs text-muted-foreground">
+                The URL where users will be redirected after authentication
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="edit-description">Description</Label>
+              <Textarea
+                id="edit-description"
+                value={editFormData.description}
+                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                placeholder="Describe what this app does..."
+                data-testid="input-edit-description"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Pricing Model</Label>
+              <Select
+                value={editFormData.pricingModel}
+                onValueChange={(value) => setEditFormData({ ...editFormData, pricingModel: value })}
+                data-testid="select-edit-pricing-model"
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="per_call">Per API Call</SelectItem>
+                  <SelectItem value="per_minute">Per Minute</SelectItem>
+                  <SelectItem value="per_request">Per Request</SelectItem>
+                  <SelectItem value="subscription">Subscription</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Button
+              className="w-full"
+              onClick={() => updateMutation.mutate()}
+              disabled={!editFormData.callbackUrl || updateMutation.isPending}
+              data-testid="button-save-app-changes"
+            >
+              {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Changes
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
