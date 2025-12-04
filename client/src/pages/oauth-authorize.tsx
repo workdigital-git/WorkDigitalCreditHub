@@ -414,6 +414,20 @@ function ErrorState({ message, redirectUri }: { message: string; redirectUri?: s
   );
 }
 
+interface UserSubscription {
+  id: string;
+  appId: string;
+  status: string;
+  app: {
+    id: string;
+    clientId: string;
+  };
+}
+
+interface AppsResponse {
+  subscriptions: UserSubscription[];
+}
+
 export default function OAuthAuthorizePage() {
   const { user, isLoading: isAuthLoading } = useAuth();
   const { toast } = useToast();
@@ -421,6 +435,7 @@ export default function OAuthAuthorizePage() {
   const [oauthParams, setOAuthParams] = useState<OAuthParams | null>(null);
   const [step, setStep] = useState<"loading" | "login" | "consent" | "error">("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
+  const [autoAuthorizing, setAutoAuthorizing] = useState(false);
 
   useEffect(() => {
     const params = parseOAuthParams();
@@ -454,6 +469,17 @@ export default function OAuthAuthorizePage() {
     enabled: !!oauthParams?.client_id,
   });
 
+  // Check if user has already authorized this app
+  const { data: userApps, isLoading: isAppsLoading } = useQuery<AppsResponse>({
+    queryKey: ["/api/apps"],
+    enabled: !!user && !!oauthParams?.client_id,
+  });
+
+  // Check if user has an active subscription to this app
+  const isAlreadyAuthorized = userApps?.subscriptions?.some(
+    (sub) => sub.app.clientId === oauthParams?.client_id && sub.status === "ACTIVE"
+  );
+
   useEffect(() => {
     if (!oauthParams) return;
     if (isAuthLoading || isAppLoading) {
@@ -469,8 +495,18 @@ export default function OAuthAuthorizePage() {
       setStep("login");
       return;
     }
+    // Still loading subscription info
+    if (isAppsLoading) {
+      setStep("loading");
+      return;
+    }
+    // If already authorized, we'll auto-authorize in another effect
+    if (isAlreadyAuthorized) {
+      setStep("loading"); // Keep showing loading while we auto-authorize
+      return;
+    }
     setStep("consent");
-  }, [user, isAuthLoading, isAppLoading, appError, oauthParams]);
+  }, [user, isAuthLoading, isAppLoading, isAppsLoading, appError, oauthParams, isAlreadyAuthorized]);
 
   const authorizeMutation = useMutation({
     mutationFn: async () => {
@@ -499,13 +535,28 @@ export default function OAuthAuthorizePage() {
       window.location.href = data.redirect_uri;
     },
     onError: (error: any) => {
-      toast({
-        title: "Authorization failed",
-        description: error.message,
-        variant: "destructive",
-      });
+      // Only show toast if not auto-authorizing (user initiated)
+      if (!autoAuthorizing) {
+        toast({
+          title: "Authorization failed",
+          description: error.message,
+          variant: "destructive",
+        });
+      } else {
+        // For auto-authorize failures, show consent form
+        setAutoAuthorizing(false);
+        setStep("consent");
+      }
     },
   });
+
+  // Auto-authorize for users who have already granted consent
+  useEffect(() => {
+    if (isAlreadyAuthorized && user && oauthParams && !autoAuthorizing && !authorizeMutation.isPending) {
+      setAutoAuthorizing(true);
+      authorizeMutation.mutate();
+    }
+  }, [isAlreadyAuthorized, user, oauthParams, autoAuthorizing, authorizeMutation.isPending]);
 
   const handleCancel = () => {
     if (oauthParams?.redirect_uri) {
