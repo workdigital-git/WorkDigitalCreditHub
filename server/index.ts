@@ -6,6 +6,33 @@ import { createServer } from "http";
 import { startBackgroundJobs } from "./background-jobs";
 
 const app = express();
+
+const ALLOWED_ORIGINS = [
+  'https://WorkDigitalCredits.replit.app',
+  'https://workdigitalcredits.replit.app',
+  'https://better-ai-research--jking29.replit.app',
+  'https://Brand-Forge.replit.app',
+  'https://brand-forge.replit.app',
+  'https://workdigitalcredithub.com',
+  'https://workdigitalbrand.com',
+  'https://workdigital.ai',
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_ORIGINS.some(allowed => allowed.toLowerCase() === origin.toLowerCase())) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-API-Key');
+  }
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 app.use(cookieParser());
 const httpServer = createServer(app);
 
