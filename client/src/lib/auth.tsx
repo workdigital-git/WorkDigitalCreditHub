@@ -46,10 +46,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const data = await response.json();
 
+    // Check for 2FA requirement (server returns 200 with requiresTwoFactor flag)
+    if (data.requiresTwoFactor) {
+      return { requiresTwoFactor: true, method: data.method };
+    }
+
     if (!response.ok) {
-      if (data.requiresTwoFactor) {
-        return { requiresTwoFactor: true };
-      }
       throw new Error(data.message || "Login failed");
     }
 
