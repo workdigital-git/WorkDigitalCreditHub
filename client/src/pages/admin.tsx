@@ -2514,6 +2514,365 @@ function AppApiKeysTab() {
   );
 }
 
+interface OAuthAuditLog {
+  id: string;
+  traceId: string;
+  event: string;
+  clientId: string | null;
+  appName: string | null;
+  userId: string | null;
+  userEmail: string | null;
+  redirectUri: string | null;
+  scope: string | null;
+  status: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  details: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  durationMs: number;
+  createdAt: string;
+}
+
+function OAuthAuditLogsTab() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [traceIdFilter, setTraceIdFilter] = useState("");
+  const [clientIdFilter, setClientIdFilter] = useState("");
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const buildQueryString = () => {
+    const params = new URLSearchParams();
+    params.set("limit", "100");
+    if (clientIdFilter) params.set("client_id", clientIdFilter);
+    if (traceIdFilter) params.set("trace_id", traceIdFilter);
+    return params.toString();
+  };
+
+  const queryString = buildQueryString();
+  const { data: logs, isLoading, isError, error } = useQuery<OAuthAuditLog[]>({
+    queryKey: ["/api/admin/oauth-audit-logs", { clientIdFilter, traceIdFilter }],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/oauth-audit-logs?${queryString}`);
+      return res.json();
+    },
+    refetchInterval: 10000,
+  });
+
+  const { data: traceLogs, isLoading: traceLoading, isError: traceError } = useQuery<OAuthAuditLog[]>({
+    queryKey: ["/api/admin/oauth-audit-logs/trace", selectedTraceId],
+    enabled: !!selectedTraceId,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/oauth-audit-logs/trace/${selectedTraceId}`);
+      return res.json();
+    },
+  });
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "SUCCESS": return "bg-green-500/10 text-green-600 border-green-500/20";
+      case "FAILURE": return "bg-red-500/10 text-red-600 border-red-500/20";
+      case "INFO": return "bg-blue-500/10 text-blue-600 border-blue-500/20";
+      default: return "bg-gray-500/10 text-gray-600 border-gray-500/20";
+    }
+  };
+
+  const getEventColor = (event: string) => {
+    if (event.includes("FAILED") || event.includes("ERROR")) return "text-red-600";
+    if (event.includes("SUCCESS") || event.includes("ISSUED") || event.includes("CREATED")) return "text-green-600";
+    return "text-muted-foreground";
+  };
+
+  const filteredLogs = logs?.filter(log => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      log.traceId.toLowerCase().includes(query) ||
+      log.event.toLowerCase().includes(query) ||
+      log.clientId?.toLowerCase().includes(query) ||
+      log.appName?.toLowerCase().includes(query) ||
+      log.userEmail?.toLowerCase().includes(query) ||
+      log.errorCode?.toLowerCase().includes(query) ||
+      log.errorMessage?.toLowerCase().includes(query)
+    );
+  });
+
+  const formatTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleString();
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied to clipboard" });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="h-5 w-5" />
+          OAuth Audit Logs
+        </CardTitle>
+        <CardDescription>
+          Monitor OAuth authorization and token exchange flows in real-time
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-4">
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search logs..."
+              className="pl-10"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              data-testid="input-oauth-log-search"
+            />
+          </div>
+          <Input
+            placeholder="Filter by Trace ID"
+            value={traceIdFilter}
+            onChange={(e) => setTraceIdFilter(e.target.value)}
+            className="w-48"
+            data-testid="input-trace-id-filter"
+          />
+          <Input
+            placeholder="Filter by Client ID"
+            value={clientIdFilter}
+            onChange={(e) => setClientIdFilter(e.target.value)}
+            className="w-48"
+            data-testid="input-client-id-filter"
+          />
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-2" data-testid="oauth-logs-loading">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : isError ? (
+          <div className="text-center py-12 text-destructive" data-testid="oauth-logs-error">
+            <AlertTriangle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>Failed to load OAuth audit logs</p>
+            <p className="text-sm text-muted-foreground">{error?.message || "Unknown error"}</p>
+          </div>
+        ) : filteredLogs?.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground" data-testid="oauth-logs-empty">
+            <Activity className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>No OAuth audit logs found</p>
+          </div>
+        ) : (
+          <ScrollArea className="h-[500px]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Trace ID</TableHead>
+                  <TableHead>Event</TableHead>
+                  <TableHead>App</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Details</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredLogs?.map((log) => (
+                  <TableRow key={log.id} className="text-sm">
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                      {formatTime(log.createdAt)}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        <code className="text-xs font-mono truncate max-w-[100px]" title={log.traceId}>
+                          {log.traceId.substring(0, 20)}...
+                        </code>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => copyToClipboard(log.traceId)}
+                          data-testid={`button-copy-trace-${log.id}`}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => setSelectedTraceId(log.traceId)}
+                          data-testid={`button-view-trace-${log.id}`}
+                        >
+                          <Eye className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className={`font-medium ${getEventColor(log.event)}`}>
+                        {log.event}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      {log.appName ? (
+                        <span className="truncate max-w-[100px]" title={log.appName}>
+                          {log.appName}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {log.userEmail ? (
+                        <span className="truncate max-w-[120px]" title={log.userEmail}>
+                          {log.userEmail}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getStatusColor(log.status)}>
+                        {log.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {log.durationMs}ms
+                    </TableCell>
+                    <TableCell>
+                      {log.errorCode ? (
+                        <span className="text-xs text-red-600" title={log.errorMessage || ""}>
+                          {log.errorCode}
+                        </span>
+                      ) : log.details ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            try {
+                              const parsed = JSON.parse(log.details || "{}");
+                              toast({
+                                title: "Event Details",
+                                description: JSON.stringify(parsed, null, 2),
+                              });
+                            } catch {
+                              toast({ title: "Details", description: log.details || "" });
+                            }
+                          }}
+                          data-testid={`button-details-${log.id}`}
+                        >
+                          <Info className="h-3 w-3 mr-1" />
+                          View
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ScrollArea>
+        )}
+
+        <Dialog open={!!selectedTraceId} onOpenChange={() => setSelectedTraceId(null)}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto" data-testid="dialog-oauth-trace">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Activity className="h-5 w-5" />
+                OAuth Flow Trace
+              </DialogTitle>
+              <DialogDescription className="font-mono text-xs">
+                {selectedTraceId}
+              </DialogDescription>
+            </DialogHeader>
+            {traceLoading ? (
+              <div className="space-y-2" data-testid="trace-loading">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-24 w-full" />
+                ))}
+              </div>
+            ) : traceError ? (
+              <div className="text-center py-6 text-destructive" data-testid="trace-error">
+                <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
+                <p>Failed to load trace logs</p>
+              </div>
+            ) : (
+              <div className="space-y-4" data-testid="trace-logs">
+                {traceLogs?.map((log, idx) => (
+                  <Card key={log.id} className={`border-l-4 ${log.status === 'SUCCESS' ? 'border-l-green-500' : log.status === 'FAILURE' ? 'border-l-red-500' : 'border-l-blue-500'}`} data-testid={`trace-log-${log.id}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg font-semibold">{idx + 1}.</span>
+                          <span className={`font-medium ${getEventColor(log.event)}`}>{log.event}</span>
+                          <Badge className={getStatusColor(log.status)}>{log.status}</Badge>
+                        </div>
+                        <span className="text-xs text-muted-foreground">{log.durationMs}ms</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        {log.appName && (
+                          <div>
+                            <span className="text-muted-foreground">App: </span>
+                            <span>{log.appName}</span>
+                          </div>
+                        )}
+                        {log.userEmail && (
+                          <div>
+                            <span className="text-muted-foreground">User: </span>
+                            <span>{log.userEmail}</span>
+                          </div>
+                        )}
+                        {log.clientId && (
+                          <div>
+                            <span className="text-muted-foreground">Client ID: </span>
+                            <code className="text-xs">{log.clientId}</code>
+                          </div>
+                        )}
+                        {log.scope && (
+                          <div>
+                            <span className="text-muted-foreground">Scope: </span>
+                            <span>{log.scope}</span>
+                          </div>
+                        )}
+                        {log.redirectUri && (
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground">Redirect URI: </span>
+                            <code className="text-xs break-all">{log.redirectUri}</code>
+                          </div>
+                        )}
+                        {log.errorCode && (
+                          <div className="col-span-2 text-red-600">
+                            <span className="font-medium">Error: </span>
+                            {log.errorCode} - {log.errorMessage}
+                          </div>
+                        )}
+                        {log.details && (
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground">Details: </span>
+                            <pre className="text-xs mt-1 p-2 bg-muted rounded overflow-x-auto">
+                              {JSON.stringify(JSON.parse(log.details), null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {formatTime(log.createdAt)}
+                        {log.ipAddress && ` | IP: ${log.ipAddress}`}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
 
@@ -2558,6 +2917,10 @@ export default function AdminPage() {
               <BookOpen className="h-4 w-4" />
               Integration Guide
             </TabsTrigger>
+            <TabsTrigger value="oauth-logs" className="gap-2" data-testid="tab-oauth-logs">
+              <Activity className="h-4 w-4" />
+              OAuth Logs
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="users">
@@ -2574,6 +2937,10 @@ export default function AdminPage() {
 
           <TabsContent value="integration">
             <IntegrationGuideTab />
+          </TabsContent>
+
+          <TabsContent value="oauth-logs">
+            <OAuthAuditLogsTab />
           </TabsContent>
         </Tabs>
       </div>

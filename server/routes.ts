@@ -1420,6 +1420,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/admin/oauth-audit-logs", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { limit = "100", client_id, trace_id } = req.query as { limit?: string; client_id?: string; trace_id?: string };
+      const parsedLimit = Math.min(500, Math.max(1, parseInt(limit) || 100));
+      
+      const logs = await storage.getOauthAuditLogs(parsedLimit, client_id, trace_id);
+      res.json(logs);
+    } catch (error) {
+      console.error("Get OAuth audit logs error:", error);
+      res.status(500).json({ message: "Failed to fetch OAuth audit logs" });
+    }
+  });
+
+  app.get("/api/admin/oauth-audit-logs/trace/:traceId", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { traceId } = req.params;
+      const logs = await storage.getOauthAuditLogsByTraceId(traceId);
+      res.json(logs);
+    } catch (error) {
+      console.error("Get OAuth audit logs by trace error:", error);
+      res.status(500).json({ message: "Failed to fetch OAuth audit logs" });
+    }
+  });
+
   app.post("/api/admin/credit-user", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { userId, amountCents, reason } = req.body;
@@ -1747,6 +1771,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         codeChallengeMethod: code_challenge_method || null,
         scope: scope || null,
         state: state || null,
+        authorizeTraceId: traceId,
         expiresAt,
       });
 
@@ -1835,7 +1860,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ctx.userEmail = user?.email;
       ctx.scope = authCode.scope || undefined;
 
-      await logOAuthEvent(ctx, "CODE_FOUND", "INFO", undefined, undefined, { codePrefix: code.substring(0, 8) });
+      await logOAuthEvent(ctx, "CODE_FOUND", "INFO", undefined, undefined, { 
+        codePrefix: code.substring(0, 8),
+        authorizeTraceId: authCode.authorizeTraceId || null,
+      });
 
       const wasMarkedUsed = await storage.markOauthCodeUsed(authCode.id);
       if (!wasMarkedUsed) {

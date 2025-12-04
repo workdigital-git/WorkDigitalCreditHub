@@ -228,6 +228,7 @@ export const oauthAuthorizationCodes = pgTable("oauth_authorization_codes", {
   codeChallengeMethod: text("code_challenge_method"),
   scope: text("scope"),
   state: text("state"),
+  authorizeTraceId: text("authorize_trace_id"),
   usedAt: timestamp("used_at"),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
