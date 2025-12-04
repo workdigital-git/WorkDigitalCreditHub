@@ -1552,15 +1552,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const { client_id } = req.query as { client_id?: string };
       
+      console.log('[OAuth app-info] Request received:', { client_id, query: req.query });
+      
       if (!client_id) {
+        console.log('[OAuth app-info] Missing client_id');
         return res.status(400).json({ error: "client_id is required" });
       }
 
       const appRecord = await storage.getAppByClientId(client_id);
       if (!appRecord) {
+        console.log('[OAuth app-info] Unknown client_id:', client_id);
         return res.status(404).json({ error: "Unknown client_id" });
       }
 
+      console.log('[OAuth app-info] Found app:', { id: appRecord.id, name: appRecord.name });
       res.json({
         id: appRecord.id,
         name: appRecord.name,
@@ -1593,7 +1598,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         code_challenge_method?: string;
       };
 
+      console.log('[OAuth authorize] Request received:', {
+        client_id,
+        redirect_uri,
+        response_type,
+        scope,
+        state: state ? '[present]' : '[missing]',
+        code_challenge: code_challenge ? '[present]' : '[missing]',
+        code_challenge_method,
+        userId: req.user?.id,
+      });
+
       if (!client_id || !redirect_uri) {
+        console.log('[OAuth authorize] Missing required params:', { client_id: !!client_id, redirect_uri: !!redirect_uri });
         return res.status(400).json({ error: "invalid_request", error_description: "client_id and redirect_uri are required" });
       }
 
@@ -1693,11 +1710,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const { grant_type, code, redirect_uri, client_id, client_secret, code_verifier } = req.body;
 
+      console.log('[OAuth token] Request received:', {
+        grant_type,
+        code: code ? `${code.substring(0, 10)}...` : '[missing]',
+        redirect_uri,
+        client_id,
+        client_secret: client_secret ? '[present]' : '[missing]',
+        code_verifier: code_verifier ? '[present]' : '[missing]',
+      });
+
       if (grant_type !== "authorization_code") {
+        console.log('[OAuth token] Unsupported grant type:', grant_type);
         return res.status(400).json({ error: "unsupported_grant_type", error_description: "Only authorization_code grant is supported" });
       }
 
       if (!code || !redirect_uri || !client_id) {
+        console.log('[OAuth token] Missing required params:', { code: !!code, redirect_uri: !!redirect_uri, client_id: !!client_id });
         return res.status(400).json({ error: "invalid_request", error_description: "code, redirect_uri, and client_id are required" });
       }
 
