@@ -1198,16 +1198,134 @@ def debit_credits(user_email, amount_cents, description):
     response.raise_for_status()
     return response.json()`;
 
+  const quickStartChecklist = `# Work Digital Credits Hub - Integration Checklist
+# ================================================
+
+## STEP 1: Register Your App in Credits Hub (Admin > Apps)
+□ Create new app with name, slug, and description
+□ Add Production callback URL: https://yourdomain.com/api/auth/callback
+□ Add Development callback URL: https://xxx.replit.dev/api/auth/callback
+□ Note down the Client ID and Client Secret
+
+## STEP 2: Generate API Key (Admin > API Keys)
+□ Select your app from the dropdown
+□ Give the key a descriptive name (e.g., "Production Key")
+□ Enable scopes: balance:read, credits:debit
+□ Copy and securely store the API key (shown only once!)
+
+## STEP 3: Add Environment Variables to Your App
+CREDITS_HUB_URL=${baseUrl}
+CREDITS_HUB_CLIENT_ID=client_xxxxx
+CREDITS_HUB_CLIENT_SECRET=xxxxx
+CREDITS_HUB_API_KEY=ch_xxxxx
+CREDITS_HUB_CALLBACK_URL=https://yourdomain.com/api/auth/callback
+
+## STEP 4: Implement SSO Login in Your App
+1. User clicks "Sign in with Work Digital"
+2. Generate PKCE code_verifier (32 random bytes, base64url)
+3. Generate code_challenge = SHA256(code_verifier) base64url
+4. Store code_verifier in session
+5. Redirect to: ${baseUrl}/oauth/authorize?
+   - client_id=YOUR_CLIENT_ID
+   - redirect_uri=YOUR_CALLBACK_URL
+   - response_type=code
+   - code_challenge=GENERATED_CHALLENGE
+   - code_challenge_method=S256
+   - scope=openid profile credits
+   - state=RANDOM_CSRF_TOKEN
+
+## STEP 5: Handle OAuth Callback
+1. User lands on your callback URL with ?code=xxx&state=xxx
+2. Verify state matches what you stored
+3. POST to ${baseUrl}/api/oauth/token with:
+   {
+     "grant_type": "authorization_code",
+     "code": "received_code",
+     "redirect_uri": "YOUR_CALLBACK_URL",
+     "client_id": "YOUR_CLIENT_ID",
+     "client_secret": "YOUR_CLIENT_SECRET",
+     "code_verifier": "stored_verifier"
+   }
+4. Response contains: access_token, user info (id, email, fullName)
+5. Store user in your session, redirect to dashboard
+
+## STEP 6: Implement Credit Operations
+# Check Balance:
+POST ${baseUrl}/api/v2/balance
+Headers: Authorization: Bearer YOUR_API_KEY
+Body: { "user_email": "user@example.com" }
+
+# Debit Credits:
+POST ${baseUrl}/api/v2/debit
+Headers: Authorization: Bearer YOUR_API_KEY
+Body: {
+  "user_email": "user@example.com",
+  "amount_cents": 100,
+  "description": "Feature usage",
+  "idempotency_key": "unique-id-for-this-charge"
+}
+
+## TESTING CHECKLIST
+□ OAuth login flow works in development
+□ OAuth login flow works in production
+□ Can check user balance via API
+□ Can debit credits via API
+□ Handles insufficient balance (402) gracefully
+□ Handles unauthorized user (403) gracefully
+□ Idempotency keys prevent duplicate charges
+`;
+
   return (
     <div className="space-y-6">
+      <Card className="border-primary/20 bg-primary/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Terminal className="h-5 w-5" />
+            Quick Start Checklist
+          </CardTitle>
+          <CardDescription>
+            Copy this complete integration workflow to get started with a new service
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="relative">
+            <pre className="p-4 rounded-lg bg-background border overflow-x-auto text-xs font-mono max-h-96 overflow-y-auto whitespace-pre-wrap">
+              {quickStartChecklist}
+            </pre>
+            <Button
+              variant="default"
+              size="sm"
+              className="absolute top-2 right-2"
+              onClick={() => copyToClipboard(quickStartChecklist, "checklist")}
+              data-testid="button-copy-checklist"
+            >
+              {copiedField === "checklist" ? (
+                <>
+                  <Check className="h-4 w-4 mr-1" />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="h-4 w-4 mr-1" />
+                  Copy Checklist
+                </>
+              )}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            This checklist contains all the steps needed to integrate a new service. Select an app below to see credentials and code examples pre-filled.
+          </p>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <BookOpen className="h-5 w-5" />
-            Integration Guide
+            App-Specific Integration Guide
           </CardTitle>
           <CardDescription>
-            Complete setup instructions for external apps to integrate with the Work Digital membership platform
+            Select an app to view its credentials and pre-filled code examples
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -1236,7 +1354,7 @@ def debit_credits(user_email, amount_cents, description):
 
           {!selectedApp && !isLoading && (
             <div className="text-center py-8 text-muted-foreground">
-              Select an app above to view its integration guide
+              Select an app above to view its credentials and code examples
             </div>
           )}
         </CardContent>
