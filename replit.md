@@ -109,6 +109,7 @@ This is a **standalone membership + billing platform** that other apps can plug 
 - `GET /api/admin/users` - List all users
 - `GET /api/admin/apps` - List all apps
 - `POST /api/admin/apps` - Register new app
+- `PATCH /api/admin/apps/:id` - Update app settings (callbackUrl, description, pricingModel)
 - `POST /api/admin/credit-user` - Manually credit a user's wallet
 - `GET /api/admin/app-api-keys` - List all app API keys
 - `POST /api/admin/app-api-keys` - Generate new app API key
