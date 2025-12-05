@@ -1010,7 +1010,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/payment-gateways", authMiddleware, async (req: AuthRequest, res) => {
     try {
-      const settings = await storage.getAllPaymentGatewaySettings();
+      const settings = await storage.getPaymentGatewaySettings();
       
       const gatewayInfo: Record<string, { displayName: string; supportedMethods: string[]; configured: boolean }> = {
         STRIPE: {
@@ -1071,7 +1071,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(404).json({ message: "Wallet not found" });
       }
 
-      const gatewaySetting = await storage.getPaymentGatewaySetting(gateway);
+      const gatewaySetting = await storage.getPaymentGatewaySettingsByGateway(gateway);
       if (!gatewaySetting?.enabled) {
         return res.status(400).json({ message: "This payment gateway is not available" });
       }
