@@ -24,6 +24,65 @@ const JWT_SECRET = process.env.SESSION_SECRET;
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY = "7d";
 
+interface RateLimitEntry {
+  count: number;
+  resetTime: number;
+}
+
+class OAuthRateLimiter {
+  private limits: Map<string, RateLimitEntry> = new Map();
+  private readonly windowMs: number;
+  private readonly maxRequests: number;
+
+  constructor(windowMs: number = 60 * 1000, maxRequests: number = 30) {
+    this.windowMs = windowMs;
+    this.maxRequests = maxRequests;
+    setInterval(() => this.cleanup(), windowMs);
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.limits.entries()) {
+      if (entry.resetTime <= now) {
+        this.limits.delete(key);
+      }
+    }
+  }
+
+  check(identifier: string): { allowed: boolean; remaining: number; resetTime: number; retryAfter?: number } {
+    const now = Date.now();
+    let entry = this.limits.get(identifier);
+
+    if (!entry || entry.resetTime <= now) {
+      entry = { count: 0, resetTime: now + this.windowMs };
+      this.limits.set(identifier, entry);
+    }
+
+    entry.count++;
+    const remaining = Math.max(0, this.maxRequests - entry.count);
+    const retryAfter = entry.count > this.maxRequests ? Math.ceil((entry.resetTime - now) / 1000) : undefined;
+
+    return {
+      allowed: entry.count <= this.maxRequests,
+      remaining,
+      resetTime: entry.resetTime,
+      retryAfter,
+    };
+  }
+
+  getHeaders(result: { remaining: number; resetTime: number }): Record<string, string> {
+    return {
+      "X-RateLimit-Limit": String(this.maxRequests),
+      "X-RateLimit-Remaining": String(result.remaining),
+      "X-RateLimit-Reset": String(Math.ceil(result.resetTime / 1000)),
+    };
+  }
+}
+
+const oauthRateLimiter = new OAuthRateLimiter(60 * 1000, 60);
+const oauthTokenRateLimiter = new OAuthRateLimiter(60 * 1000, 30);
+const authRateLimiter = new OAuthRateLimiter(15 * 60 * 1000, 10);
+
 interface AuthRequest extends Request {
   user?: {
     id: string;
@@ -380,6 +439,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/auth/login", async (req, res) => {
+    const rateLimitKey = req.body.email || req.ip || "anonymous";
+    const rateLimitResult = authRateLimiter.check(rateLimitKey);
+    const rateLimitHeaders = authRateLimiter.getHeaders(rateLimitResult);
+    
+    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+
+    if (!rateLimitResult.allowed) {
+      res.setHeader("Retry-After", String(rateLimitResult.retryAfter || 900));
+      return res.status(429).json({
+        message: "Too many login attempts. Please wait before trying again.",
+        retry_after: rateLimitResult.retryAfter,
+      });
+    }
+
     try {
       const validation = loginSchema.safeParse(req.body);
       if (!validation.success) {
@@ -1904,6 +1979,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       requestPath: "/api/oauth/authorize",
     };
 
+    const rateLimitKey = req.user?.id || req.ip || "anonymous";
+    const rateLimitResult = oauthRateLimiter.check(rateLimitKey);
+    const rateLimitHeaders = oauthRateLimiter.getHeaders(rateLimitResult);
+    
+    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+
+    if (!rateLimitResult.allowed) {
+      ctx.userId = req.user?.id;
+      ctx.userEmail = req.user?.email;
+      res.setHeader("Retry-After", String(rateLimitResult.retryAfter || 60));
+      await logOAuthEvent(ctx, "RATE_LIMITED", "FAILURE", "rate_limit_exceeded", "Too many authorization requests");
+      return res.status(429).json({
+        error: "rate_limit_exceeded",
+        error_description: "Too many authorization requests. Please wait before trying again.",
+        retry_after: rateLimitResult.retryAfter,
+        trace_id: traceId,
+      });
+    }
+
     try {
       const { 
         client_id, 
@@ -1934,6 +2030,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         has_state: !!state,
         has_code_challenge: !!code_challenge,
         code_challenge_method,
+        rate_limit_remaining: rateLimitResult.remaining,
       });
 
       if (!client_id || !redirect_uri) {
@@ -2084,6 +2181,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       requestPath: "/api/oauth/token",
     };
 
+    const rateLimitKey = req.body.client_id || req.ip || "anonymous";
+    const rateLimitResult = oauthTokenRateLimiter.check(rateLimitKey);
+    const rateLimitHeaders = oauthTokenRateLimiter.getHeaders(rateLimitResult);
+    
+    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+
+    if (!rateLimitResult.allowed) {
+      ctx.clientId = req.body.client_id;
+      res.setHeader("Retry-After", String(rateLimitResult.retryAfter || 60));
+      await logOAuthEvent(ctx, "RATE_LIMITED", "FAILURE", "rate_limit_exceeded", "Too many token requests");
+      return res.status(429).json({
+        error: "rate_limit_exceeded",
+        error_description: "Too many requests. Please wait before trying again.",
+        retry_after: rateLimitResult.retryAfter,
+        trace_id: traceId,
+      });
+    }
+
     try {
       const { grant_type, code, redirect_uri, client_id, client_secret, code_verifier } = req.body;
 
@@ -2095,6 +2212,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         has_code: !!code,
         has_client_secret: !!client_secret,
         has_code_verifier: !!code_verifier,
+        rate_limit_remaining: rateLimitResult.remaining,
       });
 
       if (grant_type !== "authorization_code") {
