@@ -76,6 +76,7 @@ export interface IStorage {
   getTransactionsByWalletId(walletId: string, limit?: number): Promise<WalletTransaction[]>;
   createTransaction(transaction: Omit<WalletTransaction, "id" | "createdAt">): Promise<WalletTransaction>;
   updateTransactionStatus(id: string, status: "PENDING" | "COMPLETED" | "FAILED"): Promise<void>;
+  updateTransactionExternalRef(id: string, externalRef: string, gateway: string): Promise<void>;
 
   getAutoTopupRule(id: string): Promise<AutoTopupRule | undefined>;
   getAutoTopupRuleByUserId(userId: string): Promise<AutoTopupRule | undefined>;
@@ -281,6 +282,16 @@ export class DatabaseStorage implements IStorage {
 
   async updateTransactionStatus(id: string, status: "PENDING" | "COMPLETED" | "FAILED"): Promise<void> {
     await db.update(walletTransactions).set({ status }).where(eq(walletTransactions.id, id));
+  }
+
+  async updateTransactionExternalRef(id: string, externalRef: string, gateway: string): Promise<void> {
+    const [tx] = await db.select().from(walletTransactions).where(eq(walletTransactions.id, id));
+    if (tx) {
+      const newDescription = `${tx.description} [${gateway}: ${externalRef.substring(0, 20)}...]`;
+      await db.update(walletTransactions)
+        .set({ description: newDescription })
+        .where(eq(walletTransactions.id, id));
+    }
   }
 
   async getAutoTopupRule(id: string): Promise<AutoTopupRule | undefined> {

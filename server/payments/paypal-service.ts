@@ -66,17 +66,23 @@ async function getPayPalAccessToken(sandboxMode: boolean): Promise<string | null
   }
 }
 
+export interface CreatePayPalOrderParams {
+  amountCents: number;
+  currency?: string;
+  returnUrl: string;
+  cancelUrl: string;
+  sandboxMode?: boolean;
+  description?: string;
+  metadata?: Record<string, string>;
+}
+
 export async function createPayPalOrder(
-  amountCents: number,
-  currency: string = "USD",
-  sandboxMode: boolean = true,
-  returnUrl: string,
-  cancelUrl: string,
-  description?: string
-): Promise<PayPalOrderResult> {
+  params: CreatePayPalOrderParams
+): Promise<{ orderId: string; approvalUrl: string }> {
+  const { amountCents, currency = "USD", returnUrl, cancelUrl, description, sandboxMode = true } = params;
   const accessToken = await getPayPalAccessToken(sandboxMode);
   if (!accessToken) {
-    return { success: false, error: "PayPal not configured or authentication failed" };
+    throw new Error("PayPal not configured or authentication failed");
   }
 
   const baseUrl = getPayPalBaseUrl(sandboxMode);
@@ -120,20 +126,19 @@ export async function createPayPalOrder(
     if (!response.ok) {
       const errorText = await response.text();
       console.error("PayPal order creation error:", errorText);
-      return { success: false, error: "Failed to create PayPal order" };
+      throw new Error("Failed to create PayPal order");
     }
 
     const data = await response.json();
     const approvalLink = data.links?.find((link: any) => link.rel === "payer-action");
 
     return {
-      success: true,
       orderId: data.id,
-      approvalUrl: approvalLink?.href,
+      approvalUrl: approvalLink?.href || "",
     };
   } catch (error: any) {
     console.error("PayPal order creation error:", error);
-    return { success: false, error: error.message };
+    throw new Error(error.message || "Failed to create PayPal order");
   }
 }
 

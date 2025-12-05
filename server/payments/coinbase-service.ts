@@ -33,18 +33,24 @@ async function getCoinbaseHeaders(): Promise<Record<string, string> | null> {
   };
 }
 
+export interface CreateCoinbaseChargeParams {
+  amountCents: number;
+  currency?: string;
+  name: string;
+  description: string;
+  redirectUrl: string;
+  cancelUrl: string;
+  metadata?: Record<string, string>;
+}
+
 export async function createCoinbaseCharge(
-  amountCents: number,
-  currency: string = "USD",
-  name: string,
-  description: string,
-  redirectUrl: string,
-  cancelUrl: string,
-  metadata?: Record<string, string>
-): Promise<CoinbaseChargeResult> {
+  params: CreateCoinbaseChargeParams
+): Promise<{ chargeId: string; hostedUrl: string }> {
+  const { amountCents, currency = "USD", name, description, redirectUrl, cancelUrl, metadata } = params;
+  
   const headers = await getCoinbaseHeaders();
   if (!headers) {
-    return { success: false, error: "Coinbase Commerce not configured" };
+    throw new Error("Coinbase Commerce not configured");
   }
 
   const amountValue = (amountCents / 100).toFixed(2);
@@ -70,21 +76,19 @@ export async function createCoinbaseCharge(
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Coinbase charge creation error:", errorText);
-      return { success: false, error: "Failed to create Coinbase charge" };
+      throw new Error("Failed to create Coinbase charge");
     }
 
     const data = await response.json();
     const charge = data.data;
 
     return {
-      success: true,
       chargeId: charge.id,
       hostedUrl: charge.hosted_url,
-      expiresAt: charge.expires_at,
     };
   } catch (error: any) {
     console.error("Coinbase charge creation error:", error);
-    return { success: false, error: error.message };
+    throw new Error(error.message || "Failed to create Coinbase charge");
   }
 }
 

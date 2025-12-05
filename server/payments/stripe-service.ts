@@ -271,3 +271,59 @@ export async function chargePaymentMethod(
     return { success: false, error: error.message };
   }
 }
+
+export interface CheckoutSessionParams {
+  amountCents: number;
+  currency: string;
+  successUrl: string;
+  cancelUrl: string;
+  metadata?: Record<string, string>;
+}
+
+export interface CheckoutSessionResult {
+  id: string;
+  url: string;
+}
+
+export async function createStripeCheckoutSession(
+  params: CheckoutSessionParams
+): Promise<CheckoutSessionResult> {
+  const stripe = await getStripeClient();
+  if (!stripe) {
+    throw new Error("Stripe not configured");
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [
+        {
+          price_data: {
+            currency: params.currency,
+            product_data: {
+              name: "Wallet Funding",
+              description: `Add ${(params.amountCents / 100).toFixed(2)} ${params.currency.toUpperCase()} to your wallet`,
+            },
+            unit_amount: params.amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: params.successUrl,
+      cancel_url: params.cancelUrl,
+      metadata: params.metadata,
+    });
+
+    if (!session.url) {
+      throw new Error("Stripe checkout session created but no URL returned");
+    }
+
+    return {
+      id: session.id,
+      url: session.url,
+    };
+  } catch (error: any) {
+    console.error("Stripe checkout session error:", error);
+    throw new Error(error.message || "Failed to create checkout session");
+  }
+}

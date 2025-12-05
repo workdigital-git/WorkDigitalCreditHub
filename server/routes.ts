@@ -1008,6 +1008,164 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/payment-gateways", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const settings = await storage.getAllPaymentGatewaySettings();
+      
+      const gatewayInfo: Record<string, { displayName: string; supportedMethods: string[]; configured: boolean }> = {
+        STRIPE: {
+          displayName: "Stripe",
+          supportedMethods: ["CARD", "BANK_ACH"],
+          configured: !!process.env.STRIPE_SECRET_KEY,
+        },
+        PAYPAL: {
+          displayName: "PayPal",
+          supportedMethods: ["PAYPAL", "VENMO"],
+          configured: !!(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
+        },
+        COINBASE: {
+          displayName: "Coinbase Commerce",
+          supportedMethods: ["CRYPTO"],
+          configured: !!process.env.COINBASE_COMMERCE_API_KEY,
+        },
+      };
+
+      const gateways = Object.entries(gatewayInfo)
+        .map(([gateway, info]) => {
+          const setting = settings.find((s) => s.gatewayName === gateway);
+          const isEnabled = setting?.enabled ?? false;
+          const sandboxMode = setting?.sandboxMode ?? true;
+          const configured = info.configured;
+          
+          return {
+            gateway,
+            displayName: info.displayName,
+            enabled: isEnabled && configured,
+            sandboxMode,
+            supportedMethods: info.supportedMethods,
+          };
+        })
+        .filter((g) => g.enabled);
+
+      res.json(gateways);
+    } catch (error) {
+      console.error("Get payment gateways error:", error);
+      res.status(500).json({ message: "Failed to get payment gateways" });
+    }
+  });
+
+  app.post("/api/wallet/initiate-payment", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { amountCents, gateway, paymentMethodType } = req.body;
+
+      if (!amountCents || amountCents < 100) {
+        return res.status(400).json({ message: "Minimum amount is $1.00" });
+      }
+
+      if (!gateway || !["STRIPE", "PAYPAL", "COINBASE"].includes(gateway)) {
+        return res.status(400).json({ message: "Invalid payment gateway" });
+      }
+
+      const wallet = await storage.getWalletByUserId(req.user!.id);
+      if (!wallet) {
+        return res.status(404).json({ message: "Wallet not found" });
+      }
+
+      const gatewaySetting = await storage.getPaymentGatewaySetting(gateway);
+      if (!gatewaySetting?.enabled) {
+        return res.status(400).json({ message: "This payment gateway is not available" });
+      }
+
+      const transaction = await storage.createTransaction({
+        walletId: wallet.id,
+        type: "CREDIT",
+        source: "USER_DEPOSIT",
+        amountCents,
+        description: `Pending deposit via ${gateway}`,
+        status: "PENDING",
+        appId: null,
+      });
+
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const successUrl = `${baseUrl}/wallet?payment=success&transactionId=${transaction.id}`;
+      const cancelUrl = `${baseUrl}/wallet?payment=cancelled`;
+
+      let paymentResult: { redirectUrl?: string; clientSecret?: string; paymentId?: string } = {};
+
+      if (gateway === "STRIPE") {
+        const { createStripeCheckoutSession } = await import("./payments/stripe-service");
+        const session = await createStripeCheckoutSession({
+          amountCents,
+          currency: "usd",
+          successUrl,
+          cancelUrl,
+          metadata: {
+            transactionId: transaction.id,
+            userId: req.user!.id,
+            walletId: wallet.id,
+          },
+        });
+        if (!session.url) {
+          throw new Error("Failed to create Stripe checkout session");
+        }
+        paymentResult = { redirectUrl: session.url, paymentId: session.id };
+      } else if (gateway === "PAYPAL") {
+        const { createPayPalOrder } = await import("./payments/paypal-service");
+        const order = await createPayPalOrder({
+          amountCents,
+          currency: "USD",
+          returnUrl: successUrl,
+          cancelUrl,
+          sandboxMode: gatewaySetting.sandboxMode,
+          metadata: {
+            transactionId: transaction.id,
+            userId: req.user!.id,
+            walletId: wallet.id,
+          },
+        });
+        paymentResult = { redirectUrl: order.approvalUrl, paymentId: order.orderId };
+      } else if (gateway === "COINBASE") {
+        const { createCoinbaseCharge } = await import("./payments/coinbase-service");
+        const charge = await createCoinbaseCharge({
+          amountCents,
+          currency: "USD",
+          name: "Wallet Funding",
+          description: `Add ${(amountCents / 100).toFixed(2)} USD to wallet`,
+          redirectUrl: successUrl,
+          cancelUrl,
+          metadata: {
+            transactionId: transaction.id,
+            userId: req.user!.id,
+            walletId: wallet.id,
+          },
+        });
+        paymentResult = { redirectUrl: charge.hostedUrl, paymentId: charge.chargeId };
+      }
+
+      if (paymentResult.paymentId) {
+        await storage.updateTransactionExternalRef(transaction.id, paymentResult.paymentId, gateway);
+      }
+
+      await createAuditLog(
+        req, 
+        "PAYMENT_INITIATED", 
+        `Payment initiated via ${gateway}`, 
+        req.user!.id, 
+        "transaction", 
+        transaction.id, 
+        { amountCents, gateway, paymentMethodType }
+      );
+
+      res.json({
+        transactionId: transaction.id,
+        ...paymentResult,
+      });
+    } catch (error) {
+      console.error("Initiate payment error:", error);
+      res.status(500).json({ message: "Failed to initiate payment" });
+    }
+  });
+
   app.get("/api/payment-methods", authMiddleware, async (req: AuthRequest, res) => {
     try {
       const methods = await storage.getPaymentMethodsByUserId(req.user!.id);
