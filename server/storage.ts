@@ -11,6 +11,8 @@ import {
   refreshTokens,
   auditLogs,
   webhookEvents,
+  webhookDeliveries,
+  integrationHealthMetrics,
   smsOtpCodes,
   oauthAuthorizationCodes,
   oauthAccessTokens,
@@ -39,6 +41,10 @@ import {
   type InsertAuditLog,
   type WebhookEvent,
   type InsertWebhookEvent,
+  type WebhookDelivery,
+  type InsertWebhookDelivery,
+  type IntegrationHealthMetrics,
+  type InsertIntegrationHealthMetrics,
   type SmsOtpCode,
   type InsertSmsOtpCode,
   type OauthAuthorizationCode,
@@ -157,6 +163,21 @@ export interface IStorage {
   createOauthAuditLog(log: Omit<OauthAuditLog, "id" | "createdAt">): Promise<OauthAuditLog>;
   getOauthAuditLogs(limit?: number, clientId?: string, traceId?: string): Promise<OauthAuditLog[]>;
   getOauthAuditLogsByTraceId(traceId: string): Promise<OauthAuditLog[]>;
+  getOauthAuditLogsByAppId(appId: string, limit?: number): Promise<OauthAuditLog[]>;
+  getRecentOauthErrors(appId: string, limit?: number): Promise<OauthAuditLog[]>;
+
+  createWebhookDelivery(delivery: InsertWebhookDelivery): Promise<WebhookDelivery>;
+  updateWebhookDelivery(id: string, data: Partial<WebhookDelivery>): Promise<WebhookDelivery | undefined>;
+  getWebhookDeliveriesByAppId(appId: string, limit?: number): Promise<WebhookDelivery[]>;
+  getWebhookDeliveriesByEventId(eventId: string): Promise<WebhookDelivery[]>;
+  getRecentWebhookFailures(appId: string, limit?: number): Promise<WebhookDelivery[]>;
+
+  getIntegrationHealthMetrics(appId: string): Promise<IntegrationHealthMetrics | undefined>;
+  upsertIntegrationHealthMetrics(metrics: InsertIntegrationHealthMetrics): Promise<IntegrationHealthMetrics>;
+  updateIntegrationHealthMetrics(appId: string, data: Partial<IntegrationHealthMetrics>): Promise<IntegrationHealthMetrics | undefined>;
+  incrementHealthMetricCounter(appId: string, counter: "oauthSuccess" | "oauthFailure" | "apiCallSuccess" | "apiCallFailure" | "webhookSuccess" | "webhookFailure"): Promise<void>;
+  calculateHealthScore(appId: string): Promise<number>;
+  getQuarantinedApps(): Promise<IntegrationHealthMetrics[]>;
 
   getPaymentGatewaySettings(): Promise<PaymentGatewaySettings[]>;
   getPaymentGatewaySettingsByGateway(gateway: "STRIPE" | "PAYPAL" | "COINBASE"): Promise<PaymentGatewaySettings | undefined>;
@@ -803,6 +824,193 @@ export class DatabaseStorage implements IStorage {
       .from(oauthAuditLogs)
       .where(eq(oauthAuditLogs.traceId, traceId))
       .orderBy(oauthAuditLogs.createdAt);
+  }
+
+  async getOauthAuditLogsByAppId(appId: string, limit = 100): Promise<OauthAuditLog[]> {
+    return db
+      .select()
+      .from(oauthAuditLogs)
+      .where(eq(oauthAuditLogs.appId, appId))
+      .orderBy(desc(oauthAuditLogs.createdAt))
+      .limit(limit);
+  }
+
+  async getRecentOauthErrors(appId: string, limit = 50): Promise<OauthAuditLog[]> {
+    return db
+      .select()
+      .from(oauthAuditLogs)
+      .where(and(eq(oauthAuditLogs.appId, appId), eq(oauthAuditLogs.status, "ERROR")))
+      .orderBy(desc(oauthAuditLogs.createdAt))
+      .limit(limit);
+  }
+
+  async createWebhookDelivery(delivery: InsertWebhookDelivery): Promise<WebhookDelivery> {
+    const [created] = await db.insert(webhookDeliveries).values(delivery).returning();
+    return created;
+  }
+
+  async updateWebhookDelivery(id: string, data: Partial<WebhookDelivery>): Promise<WebhookDelivery | undefined> {
+    const [updated] = await db
+      .update(webhookDeliveries)
+      .set(data)
+      .where(eq(webhookDeliveries.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getWebhookDeliveriesByAppId(appId: string, limit = 100): Promise<WebhookDelivery[]> {
+    return db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.appId, appId))
+      .orderBy(desc(webhookDeliveries.createdAt))
+      .limit(limit);
+  }
+
+  async getWebhookDeliveriesByEventId(eventId: string): Promise<WebhookDelivery[]> {
+    return db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.webhookEventId, eventId))
+      .orderBy(webhookDeliveries.attemptNumber);
+  }
+
+  async getRecentWebhookFailures(appId: string, limit = 50): Promise<WebhookDelivery[]> {
+    return db
+      .select()
+      .from(webhookDeliveries)
+      .where(and(
+        eq(webhookDeliveries.appId, appId),
+        sql`${webhookDeliveries.status} != 'SUCCESS'`
+      ))
+      .orderBy(desc(webhookDeliveries.createdAt))
+      .limit(limit);
+  }
+
+  async getIntegrationHealthMetrics(appId: string): Promise<IntegrationHealthMetrics | undefined> {
+    const [metrics] = await db
+      .select()
+      .from(integrationHealthMetrics)
+      .where(eq(integrationHealthMetrics.appId, appId));
+    return metrics || undefined;
+  }
+
+  async upsertIntegrationHealthMetrics(metrics: InsertIntegrationHealthMetrics): Promise<IntegrationHealthMetrics> {
+    const existing = await this.getIntegrationHealthMetrics(metrics.appId);
+    if (existing) {
+      const [updated] = await db
+        .update(integrationHealthMetrics)
+        .set({ ...metrics, updatedAt: new Date() })
+        .where(eq(integrationHealthMetrics.appId, metrics.appId))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(integrationHealthMetrics).values(metrics).returning();
+    return created;
+  }
+
+  async updateIntegrationHealthMetrics(appId: string, data: Partial<IntegrationHealthMetrics>): Promise<IntegrationHealthMetrics | undefined> {
+    const [updated] = await db
+      .update(integrationHealthMetrics)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(integrationHealthMetrics.appId, appId))
+      .returning();
+    return updated || undefined;
+  }
+
+  async incrementHealthMetricCounter(
+    appId: string,
+    counter: "oauthSuccess" | "oauthFailure" | "apiCallSuccess" | "apiCallFailure" | "webhookSuccess" | "webhookFailure"
+  ): Promise<void> {
+    const columnMap = {
+      oauthSuccess: integrationHealthMetrics.oauthSuccessCount,
+      oauthFailure: integrationHealthMetrics.oauthFailureCount,
+      apiCallSuccess: integrationHealthMetrics.apiCallSuccessCount,
+      apiCallFailure: integrationHealthMetrics.apiCallFailureCount,
+      webhookSuccess: integrationHealthMetrics.webhookSuccessCount,
+      webhookFailure: integrationHealthMetrics.webhookFailureCount,
+    };
+
+    const column = columnMap[counter];
+    const isSuccess = counter.includes("Success");
+
+    const existing = await this.getIntegrationHealthMetrics(appId);
+    if (!existing) {
+      await this.upsertIntegrationHealthMetrics({
+        appId,
+        [counter === "oauthSuccess" ? "oauthSuccessCount" : 
+         counter === "oauthFailure" ? "oauthFailureCount" :
+         counter === "apiCallSuccess" ? "apiCallSuccessCount" :
+         counter === "apiCallFailure" ? "apiCallFailureCount" :
+         counter === "webhookSuccess" ? "webhookSuccessCount" : "webhookFailureCount"]: 1,
+        ...(isSuccess ? { lastSuccessAt: new Date() } : { lastFailureAt: new Date() }),
+      });
+      return;
+    }
+
+    await db
+      .update(integrationHealthMetrics)
+      .set({
+        [counter === "oauthSuccess" ? "oauthSuccessCount" : 
+         counter === "oauthFailure" ? "oauthFailureCount" :
+         counter === "apiCallSuccess" ? "apiCallSuccessCount" :
+         counter === "apiCallFailure" ? "apiCallFailureCount" :
+         counter === "webhookSuccess" ? "webhookSuccessCount" : "webhookFailureCount"]: sql`${column} + 1`,
+        ...(isSuccess ? { lastSuccessAt: new Date() } : { lastFailureAt: new Date() }),
+        updatedAt: new Date(),
+      })
+      .where(eq(integrationHealthMetrics.appId, appId));
+
+    await this.calculateHealthScore(appId);
+  }
+
+  async calculateHealthScore(appId: string): Promise<number> {
+    const metrics = await this.getIntegrationHealthMetrics(appId);
+    if (!metrics) return 100;
+
+    const totalOauth = metrics.oauthSuccessCount + metrics.oauthFailureCount;
+    const totalApi = metrics.apiCallSuccessCount + metrics.apiCallFailureCount;
+    const totalWebhook = metrics.webhookSuccessCount + metrics.webhookFailureCount;
+
+    let score = 100;
+    
+    if (totalOauth > 0) {
+      const oauthSuccessRate = metrics.oauthSuccessCount / totalOauth;
+      score -= (1 - oauthSuccessRate) * 40;
+    }
+    
+    if (totalApi > 0) {
+      const apiSuccessRate = metrics.apiCallSuccessCount / totalApi;
+      score -= (1 - apiSuccessRate) * 30;
+    }
+    
+    if (totalWebhook > 0) {
+      const webhookSuccessRate = metrics.webhookSuccessCount / totalWebhook;
+      score -= (1 - webhookSuccessRate) * 30;
+    }
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    const shouldQuarantine = score < 30;
+    await db
+      .update(integrationHealthMetrics)
+      .set({
+        healthScore: score,
+        quarantined: shouldQuarantine,
+        quarantinedAt: shouldQuarantine && !metrics.quarantined ? new Date() : metrics.quarantinedAt,
+        quarantineReason: shouldQuarantine ? "Health score below threshold" : null,
+        updatedAt: new Date(),
+      })
+      .where(eq(integrationHealthMetrics.appId, appId));
+
+    return score;
+  }
+
+  async getQuarantinedApps(): Promise<IntegrationHealthMetrics[]> {
+    return db
+      .select()
+      .from(integrationHealthMetrics)
+      .where(eq(integrationHealthMetrics.quarantined, true));
   }
 
   async getPaymentGatewaySettings(): Promise<PaymentGatewaySettings[]> {

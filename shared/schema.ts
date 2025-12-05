@@ -41,6 +41,25 @@ export const webhookEventStatusEnum = pgEnum("webhook_event_status", [
   "RETRYING"
 ]);
 
+export const oauthStageEnum = pgEnum("oauth_stage", [
+  "AUTHORIZATION",
+  "TOKEN_EXCHANGE",
+  "TOKEN_REFRESH",
+  "API_CALL",
+  "WEBHOOK_DELIVERY",
+  "CLIENT_REGISTRATION"
+]);
+
+export const errorClassEnum = pgEnum("error_class", [
+  "CLIENT",
+  "SERVER",
+  "NETWORK",
+  "VALIDATION",
+  "RATE_LIMIT",
+  "AUTHENTICATION",
+  "AUTHORIZATION"
+]);
+
 export const auditLogs = pgTable("audit_logs", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
@@ -68,6 +87,55 @@ export const webhookEvents = pgTable("webhook_events", {
   nextRetryAt: timestamp("next_retry_at"),
   processedAt: timestamp("processed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const webhookDeliveryStatusEnum = pgEnum("webhook_delivery_status", [
+  "PENDING",
+  "SUCCESS",
+  "FAILED",
+  "TIMEOUT",
+  "INVALID_RESPONSE"
+]);
+
+export const webhookDeliveries = pgTable("webhook_deliveries", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  webhookEventId: varchar("webhook_event_id", { length: 36 }).references(() => webhookEvents.id, { onDelete: "cascade" }),
+  appId: varchar("app_id", { length: 36 }).references(() => apps.id, { onDelete: "cascade" }).notNull(),
+  endpointUrl: text("endpoint_url").notNull(),
+  status: webhookDeliveryStatusEnum("status").default("PENDING").notNull(),
+  attemptNumber: bigint("attempt_number", { mode: "number" }).default(1).notNull(),
+  requestHeaders: text("request_headers"),
+  requestBody: text("request_body"),
+  responseStatus: bigint("response_status", { mode: "number" }),
+  responseHeaders: text("response_headers"),
+  responseBody: text("response_body"),
+  responseTimeMs: bigint("response_time_ms", { mode: "number" }),
+  errorClass: errorClassEnum("error_class"),
+  errorMessage: text("error_message"),
+  troubleshootingHint: text("troubleshooting_hint"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const integrationHealthMetrics = pgTable("integration_health_metrics", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  appId: varchar("app_id", { length: 36 }).references(() => apps.id, { onDelete: "cascade" }).notNull().unique(),
+  oauthSuccessCount: bigint("oauth_success_count", { mode: "number" }).default(0).notNull(),
+  oauthFailureCount: bigint("oauth_failure_count", { mode: "number" }).default(0).notNull(),
+  apiCallSuccessCount: bigint("api_call_success_count", { mode: "number" }).default(0).notNull(),
+  apiCallFailureCount: bigint("api_call_failure_count", { mode: "number" }).default(0).notNull(),
+  webhookSuccessCount: bigint("webhook_success_count", { mode: "number" }).default(0).notNull(),
+  webhookFailureCount: bigint("webhook_failure_count", { mode: "number" }).default(0).notNull(),
+  avgResponseTimeMs: bigint("avg_response_time_ms", { mode: "number" }),
+  lastSuccessAt: timestamp("last_success_at"),
+  lastFailureAt: timestamp("last_failure_at"),
+  lastErrorMessage: text("last_error_message"),
+  healthScore: bigint("health_score", { mode: "number" }).default(100).notNull(),
+  quarantined: boolean("quarantined").default(false).notNull(),
+  quarantinedAt: timestamp("quarantined_at"),
+  quarantineReason: text("quarantine_reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const twoFactorMethodEnum = pgEnum("two_factor_method", ["TOTP", "SMS"]);
@@ -248,20 +316,36 @@ export const oauthAccessTokens = pgTable("oauth_access_tokens", {
 export const oauthAuditLogs = pgTable("oauth_audit_logs", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   traceId: text("trace_id").notNull(),
+  spanId: text("span_id"),
+  parentSpanId: text("parent_span_id"),
+  stage: oauthStageEnum("stage"),
   event: text("event").notNull(),
   clientId: text("client_id"),
+  appId: varchar("app_id", { length: 36 }).references(() => apps.id, { onDelete: "set null" }),
   appName: text("app_name"),
   userId: varchar("user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
   userEmail: text("user_email"),
   redirectUri: text("redirect_uri"),
   scope: text("scope"),
   status: text("status").notNull(),
+  errorClass: errorClassEnum("error_class"),
   errorCode: text("error_code"),
   errorMessage: text("error_message"),
+  errorDetails: text("error_details"),
+  validationErrors: text("validation_errors"),
+  requestMethod: text("request_method"),
+  requestPath: text("request_path"),
+  requestHash: text("request_hash"),
+  responseStatus: bigint("response_status", { mode: "number" }),
+  responseHash: text("response_hash"),
   details: text("details"),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
   durationMs: bigint("duration_ms", { mode: "number" }),
+  rateLimitRemaining: bigint("rate_limit_remaining", { mode: "number" }),
+  rateLimitReset: timestamp("rate_limit_reset"),
+  troubleshootingHint: text("troubleshooting_hint"),
+  documentationUrl: text("documentation_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -327,8 +411,18 @@ export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   user: one(users, { fields: [auditLogs.userId], references: [users.id] }),
 }));
 
-export const webhookEventsRelations = relations(webhookEvents, ({ one }) => ({
+export const webhookEventsRelations = relations(webhookEvents, ({ one, many }) => ({
   user: one(users, { fields: [webhookEvents.userId], references: [users.id] }),
+  deliveries: many(webhookDeliveries),
+}));
+
+export const webhookDeliveriesRelations = relations(webhookDeliveries, ({ one }) => ({
+  webhookEvent: one(webhookEvents, { fields: [webhookDeliveries.webhookEventId], references: [webhookEvents.id] }),
+  app: one(apps, { fields: [webhookDeliveries.appId], references: [apps.id] }),
+}));
+
+export const integrationHealthMetricsRelations = relations(integrationHealthMetrics, ({ one }) => ({
+  app: one(apps, { fields: [integrationHealthMetrics.appId], references: [apps.id] }),
 }));
 
 export const oauthAuthorizationCodesRelations = relations(oauthAuthorizationCodes, ({ one }) => ({
@@ -343,6 +437,7 @@ export const oauthAccessTokensRelations = relations(oauthAccessTokens, ({ one })
 
 export const oauthAuditLogsRelations = relations(oauthAuditLogs, ({ one }) => ({
   user: one(users, { fields: [oauthAuditLogs.userId], references: [users.id] }),
+  app: one(apps, { fields: [oauthAuditLogs.appId], references: [apps.id] }),
 }));
 
 export const insertUserSchema = createInsertSchema(users).omit({
@@ -452,6 +547,18 @@ export const insertOauthAuditLogSchema = createInsertSchema(oauthAuditLogs).omit
   createdAt: true,
 });
 
+export const insertWebhookDeliverySchema = createInsertSchema(webhookDeliveries).omit({
+  id: true,
+  createdAt: true,
+  completedAt: true,
+});
+
+export const insertIntegrationHealthMetricsSchema = createInsertSchema(integrationHealthMetrics).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const paymentGatewayEnum = pgEnum("payment_gateway", [
   "STRIPE", "PAYPAL", "COINBASE"
 ]);
@@ -518,5 +625,9 @@ export type OauthAccessToken = typeof oauthAccessTokens.$inferSelect;
 export type InsertOauthAccessToken = z.infer<typeof insertOauthAccessTokenSchema>;
 export type OauthAuditLog = typeof oauthAuditLogs.$inferSelect;
 export type InsertOauthAuditLog = z.infer<typeof insertOauthAuditLogSchema>;
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type InsertWebhookDelivery = z.infer<typeof insertWebhookDeliverySchema>;
+export type IntegrationHealthMetrics = typeof integrationHealthMetrics.$inferSelect;
+export type InsertIntegrationHealthMetrics = z.infer<typeof insertIntegrationHealthMetricsSchema>;
 export type PaymentGatewaySettings = typeof paymentGatewaySettings.$inferSelect;
 export type InsertPaymentGatewaySettings = z.infer<typeof insertPaymentGatewaySettingsSchema>;
