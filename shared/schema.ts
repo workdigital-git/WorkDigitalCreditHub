@@ -452,6 +452,28 @@ export const insertOauthAuditLogSchema = createInsertSchema(oauthAuditLogs).omit
   createdAt: true,
 });
 
+export const paymentGatewayEnum = pgEnum("payment_gateway", [
+  "STRIPE", "PAYPAL", "COINBASE"
+]);
+
+export const paymentGatewaySettings = pgTable("payment_gateway_settings", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  gateway: paymentGatewayEnum("gateway").notNull().unique(),
+  enabled: boolean("enabled").default(false).notNull(),
+  sandboxMode: boolean("sandbox_mode").default(true).notNull(),
+  displayName: text("display_name").notNull(),
+  displayOrder: bigint("display_order", { mode: "number" }).default(0).notNull(),
+  supportedMethods: text("supported_methods").array().default([]).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertPaymentGatewaySettingsSchema = createInsertSchema(paymentGatewaySettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const fundWalletSchema = z.object({
   amountCents: z.number().min(100, "Minimum amount is $1.00"),
   paymentMethodId: z.string().uuid(),
@@ -496,3 +518,5 @@ export type OauthAccessToken = typeof oauthAccessTokens.$inferSelect;
 export type InsertOauthAccessToken = z.infer<typeof insertOauthAccessTokenSchema>;
 export type OauthAuditLog = typeof oauthAuditLogs.$inferSelect;
 export type InsertOauthAuditLog = z.infer<typeof insertOauthAuditLogSchema>;
+export type PaymentGatewaySettings = typeof paymentGatewaySettings.$inferSelect;
+export type InsertPaymentGatewaySettings = z.infer<typeof insertPaymentGatewaySettingsSchema>;

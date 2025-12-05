@@ -15,6 +15,7 @@ import {
   oauthAuthorizationCodes,
   oauthAccessTokens,
   oauthAuditLogs,
+  paymentGatewaySettings,
   type User,
   type InsertUser,
   type Wallet,
@@ -46,6 +47,8 @@ import {
   type InsertOauthAccessToken,
   type OauthAuditLog,
   type InsertOauthAuditLog,
+  type PaymentGatewaySettings,
+  type InsertPaymentGatewaySettings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -153,6 +156,13 @@ export interface IStorage {
   createOauthAuditLog(log: Omit<OauthAuditLog, "id" | "createdAt">): Promise<OauthAuditLog>;
   getOauthAuditLogs(limit?: number, clientId?: string, traceId?: string): Promise<OauthAuditLog[]>;
   getOauthAuditLogsByTraceId(traceId: string): Promise<OauthAuditLog[]>;
+
+  getPaymentGatewaySettings(): Promise<PaymentGatewaySettings[]>;
+  getPaymentGatewaySettingsByGateway(gateway: "STRIPE" | "PAYPAL" | "COINBASE"): Promise<PaymentGatewaySettings | undefined>;
+  getEnabledPaymentGateways(): Promise<PaymentGatewaySettings[]>;
+  upsertPaymentGatewaySettings(settings: InsertPaymentGatewaySettings): Promise<PaymentGatewaySettings>;
+  updatePaymentGatewaySettings(gateway: "STRIPE" | "PAYPAL" | "COINBASE", data: Partial<PaymentGatewaySettings>): Promise<PaymentGatewaySettings | undefined>;
+  initializePaymentGateways(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -782,6 +792,91 @@ export class DatabaseStorage implements IStorage {
       .from(oauthAuditLogs)
       .where(eq(oauthAuditLogs.traceId, traceId))
       .orderBy(oauthAuditLogs.createdAt);
+  }
+
+  async getPaymentGatewaySettings(): Promise<PaymentGatewaySettings[]> {
+    return db
+      .select()
+      .from(paymentGatewaySettings)
+      .orderBy(paymentGatewaySettings.displayOrder);
+  }
+
+  async getPaymentGatewaySettingsByGateway(gateway: "STRIPE" | "PAYPAL" | "COINBASE"): Promise<PaymentGatewaySettings | undefined> {
+    const [settings] = await db
+      .select()
+      .from(paymentGatewaySettings)
+      .where(eq(paymentGatewaySettings.gateway, gateway));
+    return settings || undefined;
+  }
+
+  async getEnabledPaymentGateways(): Promise<PaymentGatewaySettings[]> {
+    return db
+      .select()
+      .from(paymentGatewaySettings)
+      .where(eq(paymentGatewaySettings.enabled, true))
+      .orderBy(paymentGatewaySettings.displayOrder);
+  }
+
+  async upsertPaymentGatewaySettings(settings: InsertPaymentGatewaySettings): Promise<PaymentGatewaySettings> {
+    const existing = await this.getPaymentGatewaySettingsByGateway(settings.gateway);
+    if (existing) {
+      const [updated] = await db
+        .update(paymentGatewaySettings)
+        .set({ ...settings, updatedAt: new Date() })
+        .where(eq(paymentGatewaySettings.gateway, settings.gateway))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(paymentGatewaySettings).values(settings).returning();
+    return created;
+  }
+
+  async updatePaymentGatewaySettings(
+    gateway: "STRIPE" | "PAYPAL" | "COINBASE",
+    data: Partial<PaymentGatewaySettings>
+  ): Promise<PaymentGatewaySettings | undefined> {
+    const [updated] = await db
+      .update(paymentGatewaySettings)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(paymentGatewaySettings.gateway, gateway))
+      .returning();
+    return updated || undefined;
+  }
+
+  async initializePaymentGateways(): Promise<void> {
+    const defaultGateways: InsertPaymentGatewaySettings[] = [
+      {
+        gateway: "STRIPE",
+        enabled: false,
+        sandboxMode: true,
+        displayName: "Credit/Debit Card",
+        displayOrder: 1,
+        supportedMethods: ["CARD", "BANK_ACH"],
+      },
+      {
+        gateway: "PAYPAL",
+        enabled: false,
+        sandboxMode: true,
+        displayName: "PayPal / Venmo",
+        displayOrder: 2,
+        supportedMethods: ["PAYPAL", "VENMO"],
+      },
+      {
+        gateway: "COINBASE",
+        enabled: false,
+        sandboxMode: true,
+        displayName: "Cryptocurrency",
+        displayOrder: 3,
+        supportedMethods: ["CRYPTO"],
+      },
+    ];
+
+    for (const gateway of defaultGateways) {
+      const existing = await this.getPaymentGatewaySettingsByGateway(gateway.gateway);
+      if (!existing) {
+        await db.insert(paymentGatewaySettings).values(gateway);
+      }
+    }
   }
 }
 
