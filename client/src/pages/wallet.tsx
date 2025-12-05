@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Link } from "wouter";
 import {
   Wallet,
   Plus,
@@ -263,9 +264,17 @@ function AddFundsDialog({
                 </SelectContent>
               </Select>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                No payment methods added. Add one in Billing Methods.
-              </p>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  No payment methods added. Add one to continue.
+                </p>
+                <Link href="/billing">
+                  <Button variant="outline" className="w-full" data-testid="button-add-payment-method">
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Payment Method
+                  </Button>
+                </Link>
+              </div>
             )}
           </div>
 
@@ -393,23 +402,37 @@ function AutoTopupDialog({
 
               <div className="space-y-2">
                 <Label>Payment method</Label>
-                <Select value={selectedMethod} onValueChange={setSelectedMethod}>
-                  <SelectTrigger data-testid="select-topup-payment-method">
-                    <SelectValue placeholder="Select a payment method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {paymentMethods.map((method) => (
-                      <SelectItem key={method.id} value={method.id}>
-                        <div className="flex items-center gap-2">
-                          <span>{getPaymentMethodIcon(method.type)}</span>
-                          <span>
-                            {method.brand || method.type} •••• {method.last4}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {paymentMethods.length > 0 ? (
+                  <Select value={selectedMethod} onValueChange={setSelectedMethod}>
+                    <SelectTrigger data-testid="select-topup-payment-method">
+                      <SelectValue placeholder="Select a payment method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {paymentMethods.map((method) => (
+                        <SelectItem key={method.id} value={method.id}>
+                          <div className="flex items-center gap-2">
+                            <span>{getPaymentMethodIcon(method.type)}</span>
+                            <span>
+                              {method.brand || method.type} •••• {method.last4}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      No payment methods added. Add one to enable auto-topup.
+                    </p>
+                    <Link href="/billing">
+                      <Button variant="outline" className="w-full" data-testid="button-add-payment-method-topup">
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Payment Method
+                      </Button>
+                    </Link>
+                  </div>
+                )}
               </div>
             </>
           )}
