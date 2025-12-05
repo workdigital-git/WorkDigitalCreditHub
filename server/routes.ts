@@ -871,6 +871,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const wallet = await storage.getWalletByUserId(req.user!.id);
       const subscriptions = await storage.getAppSubscriptionsByUserId(req.user!.id);
       const paymentMethodsCount = (await storage.getPaymentMethodsByUserId(req.user!.id)).length;
+      const allApps = await storage.getAllApps();
 
       let recentTransactions: any[] = [];
       if (wallet) {
@@ -884,6 +885,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         wallet,
         recentTransactions,
         subscriptions: activeSubscriptions,
+        allApps,
         stats: {
           totalCredits: wallet?.balanceCents || 0,
           monthlySpend: 0,

@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -32,12 +31,9 @@ import {
   Shield,
   CreditCard,
   DollarSign,
-  Link2,
   Link2Off,
-  Compass,
   LayoutGrid,
   Clock,
-  TrendingUp,
   CircleDot,
   Power,
   PowerOff,
@@ -55,45 +51,6 @@ function formatPrice(cents: number | null): string {
     style: "currency",
     currency: "USD",
   }).format(cents / 100);
-}
-
-function getStatusInfo(subscription?: AppSubscription) {
-  if (!subscription || subscription.status === "CANCELLED" || subscription.status === "EXPIRED") {
-    return {
-      label: "Available",
-      variant: "outline" as const,
-      icon: CircleDot,
-      color: "text-muted-foreground",
-      bgColor: "bg-muted/50",
-    };
-  }
-
-  switch (subscription.status) {
-    case "ACTIVE":
-      return {
-        label: "Connected",
-        variant: "default" as const,
-        icon: CheckCircle2,
-        color: "text-emerald-600 dark:text-emerald-400",
-        bgColor: "bg-emerald-500/10",
-      };
-    case "PAUSED":
-      return {
-        label: "Paused",
-        variant: "secondary" as const,
-        icon: Clock,
-        color: "text-amber-600 dark:text-amber-400",
-        bgColor: "bg-amber-500/10",
-      };
-    default:
-      return {
-        label: subscription.status,
-        variant: "outline" as const,
-        icon: CircleDot,
-        color: "text-muted-foreground",
-        bgColor: "bg-muted/50",
-      };
-  }
 }
 
 function AuthorizationDialog({
@@ -324,37 +281,47 @@ function AppCard({
   onConnect,
   onDisconnect,
   isLoading,
-  showDetails = false,
 }: {
   app: App;
   subscription?: AppSubscription;
   onConnect: () => void;
   onDisconnect: () => void;
   isLoading: boolean;
-  showDetails?: boolean;
 }) {
-  const statusInfo = getStatusInfo(subscription);
   const isConnected = subscription?.status === "ACTIVE" || subscription?.status === "PAUSED";
-  const StatusIcon = statusInfo.icon;
 
   return (
-    <Card className="overflow-hidden hover-elevate group">
+    <Card className={`overflow-hidden hover-elevate group ${!isConnected ? 'border-destructive/40' : ''}`}>
       <CardContent className="p-0">
-        <div className={`h-2 ${isConnected ? 'bg-emerald-500' : 'bg-muted'}`} />
+        <div className={`h-2 ${isConnected ? 'bg-emerald-500' : 'bg-destructive/60'}`} />
         
         <div className="p-5">
           <div className="flex items-start gap-4">
-            <div className={`flex h-14 w-14 items-center justify-center rounded-xl shrink-0 ${statusInfo.bgColor}`}>
-              <AppWindow className={`h-7 w-7 ${statusInfo.color}`} />
+            <div className={`flex h-14 w-14 items-center justify-center rounded-xl shrink-0 ${
+              isConnected ? 'bg-emerald-500/10' : 'bg-destructive/10'
+            }`}>
+              <AppWindow className={`h-7 w-7 ${isConnected ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`} />
             </div>
             <div className="flex-1 min-w-0 space-y-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-semibold truncate" data-testid={`app-name-${app.id}`}>
                   {app.name}
                 </h3>
-                <Badge variant={statusInfo.variant} className="shrink-0">
-                  <StatusIcon className="h-3 w-3 mr-1" />
-                  {statusInfo.label}
+                <Badge 
+                  variant={isConnected ? "default" : "destructive"}
+                  className="shrink-0"
+                >
+                  {isConnected ? (
+                    <>
+                      <CheckCircle2 className="h-3 w-3 mr-1" />
+                      Connected
+                    </>
+                  ) : (
+                    <>
+                      <CircleDot className="h-3 w-3 mr-1" />
+                      Disconnected
+                    </>
+                  )}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">
@@ -362,23 +329,6 @@ function AppCard({
               </p>
             </div>
           </div>
-
-          {showDetails && (
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-              <div className="p-2 rounded-lg bg-muted/50">
-                <p className="text-xs text-muted-foreground">Monthly</p>
-                <p className="text-sm font-semibold">{formatPrice(app.monthlyPriceCents)}</p>
-              </div>
-              <div className="p-2 rounded-lg bg-muted/50">
-                <p className="text-xs text-muted-foreground">Yearly</p>
-                <p className="text-sm font-semibold">{formatPrice(app.yearlyPriceCents)}</p>
-              </div>
-              <div className="p-2 rounded-lg bg-muted/50">
-                <p className="text-xs text-muted-foreground">Per Use</p>
-                <p className="text-sm font-semibold">{formatPrice(app.perUsePriceCents)}</p>
-              </div>
-            </div>
-          )}
 
           <div className="mt-4 flex items-center gap-3 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
@@ -445,37 +395,19 @@ function AppCard({
   );
 }
 
-function EmptyState({ type, searchQuery }: { type: 'connected' | 'discover' | 'search', searchQuery?: string }) {
-  const configs = {
-    connected: {
-      icon: Link2,
-      title: "No connected services",
-      description: "You haven't connected any services yet. Browse available services in the Discover tab.",
-    },
-    discover: {
-      icon: Compass,
-      title: "No services available",
-      description: "No services are currently available. Check back later.",
-    },
-    search: {
-      icon: Search,
-      title: "No services found",
-      description: `No services match "${searchQuery}". Try a different search term.`,
-    },
-  };
-
-  const config = configs[type];
-  const Icon = config.icon;
-
+function EmptyState({ searchQuery }: { searchQuery?: string }) {
   return (
     <Card>
       <CardContent className="flex flex-col items-center justify-center py-16 text-center">
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
-          <Icon className="h-8 w-8 text-muted-foreground" />
+          <Search className="h-8 w-8 text-muted-foreground" />
         </div>
-        <p className="font-medium">{config.title}</p>
+        <p className="font-medium">No services found</p>
         <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-          {config.description}
+          {searchQuery 
+            ? `No services match "${searchQuery}". Try a different search term.`
+            : "No services are currently available. Check back later."
+          }
         </p>
       </CardContent>
     </Card>
@@ -503,7 +435,6 @@ function StatCard({ icon: Icon, label, value, color }: {
 
 export default function AppsPage() {
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState("my-apps");
   const [authorizingApp, setAuthorizingApp] = useState<App | null>(null);
   const [disconnectingApp, setDisconnectingApp] = useState<App | null>(null);
   const [loadingAppId, setLoadingAppId] = useState<string | null>(null);
@@ -560,31 +491,35 @@ export default function AppsPage() {
   const getSubscription = (appId: string) =>
     data?.subscriptions?.find((s) => s.appId === appId);
 
-  const connectedApps = data?.availableApps?.filter((app) => {
+  const allApps = data?.availableApps ?? [];
+
+  const connectedApps = allApps.filter((app) => {
     const sub = getSubscription(app.id);
     return sub?.status === "ACTIVE" || sub?.status === "PAUSED";
-  }) ?? [];
+  });
 
-  const availableApps = data?.availableApps?.filter((app) => {
+  const disconnectedApps = allApps.filter((app) => {
     const sub = getSubscription(app.id);
     return !sub || sub.status === "CANCELLED" || sub.status === "EXPIRED" || sub.status === "PENDING";
-  }) ?? [];
+  });
 
-  const filteredConnectedApps = connectedApps.filter(
+  const filteredApps = allApps.filter(
     (app) =>
       app.name.toLowerCase().includes(search.toLowerCase()) ||
       app.description.toLowerCase().includes(search.toLowerCase())
   );
 
-  const filteredAvailableApps = availableApps.filter(
-    (app) =>
-      app.name.toLowerCase().includes(search.toLowerCase()) ||
-      app.description.toLowerCase().includes(search.toLowerCase())
-  );
+  const sortedFilteredApps = [...filteredApps].sort((a, b) => {
+    const aConnected = connectedApps.some(c => c.id === a.id);
+    const bConnected = connectedApps.some(c => c.id === b.id);
+    if (aConnected && !bConnected) return -1;
+    if (!aConnected && bConnected) return 1;
+    return a.name.localeCompare(b.name);
+  });
 
-  const totalApps = data?.availableApps?.length ?? 0;
+  const totalApps = allApps.length;
   const connectedCount = connectedApps.length;
-  const availableCount = availableApps.length;
+  const disconnectedCount = disconnectedApps.length;
 
   return (
     <Layout>
@@ -614,163 +549,91 @@ export default function AppsPage() {
             color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
           />
           <StatCard 
-            icon={Compass} 
-            label="Available" 
-            value={availableCount}
-            color="bg-blue-500/10 text-blue-600 dark:text-blue-400"
+            icon={CircleDot} 
+            label="Disconnected" 
+            value={disconnectedCount}
+            color="bg-destructive/10 text-destructive"
           />
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <TabsList>
-              <TabsTrigger value="my-apps" className="gap-2" data-testid="tab-my-apps">
-                <Link2 className="h-4 w-4" />
-                My Apps
-                {connectedCount > 0 && (
-                  <Badge variant="secondary" className="ml-1 h-5 px-1.5">
-                    {connectedCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="discover" className="gap-2" data-testid="tab-discover">
-                <Compass className="h-4 w-4" />
-                Discover
-                {availableCount > 0 && (
-                  <Badge variant="secondary" className="ml-1 h-5 px-1.5">
-                    {availableCount}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
+        <div className="relative w-full max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search apps..."
+            className="pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            data-testid="input-search-apps"
+          />
+        </div>
 
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search apps..."
-                className="pl-9"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                data-testid="input-search-apps"
-              />
-            </div>
+        {isLoading ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[...Array(6)].map((_, i) => (
+              <Card key={i}>
+                <CardContent className="p-0">
+                  <div className="h-2 bg-muted" />
+                  <div className="p-5 space-y-4">
+                    <div className="flex items-start gap-4">
+                      <Skeleton className="h-14 w-14 rounded-xl" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-5 w-32" />
+                        <Skeleton className="h-4 w-full" />
+                        <Skeleton className="h-4 w-2/3" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
-
-          <TabsContent value="my-apps" className="space-y-4">
-            {isLoading ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[...Array(3)].map((_, i) => (
-                  <Card key={i}>
-                    <CardContent className="p-0">
-                      <Skeleton className="h-2 w-full" />
-                      <div className="p-5">
-                        <div className="flex items-start gap-4">
-                          <Skeleton className="h-14 w-14 rounded-xl shrink-0" />
-                          <div className="flex-1 space-y-2">
-                            <Skeleton className="h-5 w-32" />
-                            <Skeleton className="h-4 w-full" />
-                          </div>
-                        </div>
-                        <div className="mt-4">
-                          <Skeleton className="h-9 w-full" />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : search && filteredConnectedApps.length === 0 ? (
-              <EmptyState type="search" searchQuery={search} />
-            ) : filteredConnectedApps.length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredConnectedApps.map((app) => (
-                  <AppCard
-                    key={app.id}
-                    app={app}
-                    subscription={getSubscription(app.id)}
-                    onConnect={() => setAuthorizingApp(app)}
-                    onDisconnect={() => setDisconnectingApp(app)}
-                    isLoading={loadingAppId === app.id}
-                    showDetails
-                  />
-                ))}
-              </div>
-            ) : (
-              <EmptyState type="connected" />
-            )}
-          </TabsContent>
-
-          <TabsContent value="discover" className="space-y-4">
-            {isLoading ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[...Array(6)].map((_, i) => (
-                  <Card key={i}>
-                    <CardContent className="p-0">
-                      <Skeleton className="h-2 w-full" />
-                      <div className="p-5">
-                        <div className="flex items-start gap-4">
-                          <Skeleton className="h-14 w-14 rounded-xl shrink-0" />
-                          <div className="flex-1 space-y-2">
-                            <Skeleton className="h-5 w-32" />
-                            <Skeleton className="h-4 w-full" />
-                          </div>
-                        </div>
-                        <div className="mt-4">
-                          <Skeleton className="h-9 w-full" />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : search && filteredAvailableApps.length === 0 ? (
-              <EmptyState type="search" searchQuery={search} />
-            ) : filteredAvailableApps.length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredAvailableApps.map((app) => (
-                  <AppCard
-                    key={app.id}
-                    app={app}
-                    subscription={getSubscription(app.id)}
-                    onConnect={() => setAuthorizingApp(app)}
-                    onDisconnect={() => setDisconnectingApp(app)}
-                    isLoading={loadingAppId === app.id}
-                    showDetails
-                  />
-                ))}
-              </div>
-            ) : (
-              <EmptyState type="discover" />
-            )}
-          </TabsContent>
-        </Tabs>
-
-        <AuthorizationDialog
-          app={authorizingApp}
-          open={!!authorizingApp}
-          onOpenChange={(open) => !open && setAuthorizingApp(null)}
-          onConfirm={() => {
-            if (authorizingApp) {
-              setLoadingAppId(authorizingApp.id);
-              subscribeMutation.mutate(authorizingApp.id);
-            }
-          }}
-          isLoading={!!authorizingApp && loadingAppId === authorizingApp.id}
-        />
-
-        <DisconnectDialog
-          app={disconnectingApp}
-          open={!!disconnectingApp}
-          onOpenChange={(open) => !open && setDisconnectingApp(null)}
-          onConfirm={() => {
-            if (disconnectingApp) {
-              setLoadingAppId(disconnectingApp.id);
-              unsubscribeMutation.mutate(disconnectingApp.id);
-            }
-          }}
-          isLoading={!!disconnectingApp && loadingAppId === disconnectingApp.id}
-        />
+        ) : sortedFilteredApps.length === 0 ? (
+          <EmptyState searchQuery={search} />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {sortedFilteredApps.map((app) => {
+              const subscription = getSubscription(app.id);
+              return (
+                <AppCard
+                  key={app.id}
+                  app={app}
+                  subscription={subscription}
+                  onConnect={() => setAuthorizingApp(app)}
+                  onDisconnect={() => setDisconnectingApp(app)}
+                  isLoading={loadingAppId === app.id}
+                />
+              );
+            })}
+          </div>
+        )}
       </div>
+
+      <AuthorizationDialog
+        app={authorizingApp}
+        open={!!authorizingApp}
+        onOpenChange={(open) => !open && setAuthorizingApp(null)}
+        onConfirm={() => {
+          if (authorizingApp) {
+            setLoadingAppId(authorizingApp.id);
+            subscribeMutation.mutate(authorizingApp.id);
+          }
+        }}
+        isLoading={subscribeMutation.isPending}
+      />
+
+      <DisconnectDialog
+        app={disconnectingApp}
+        open={!!disconnectingApp}
+        onOpenChange={(open) => !open && setDisconnectingApp(null)}
+        onConfirm={() => {
+          if (disconnectingApp) {
+            setLoadingAppId(disconnectingApp.id);
+            unsubscribeMutation.mutate(disconnectingApp.id);
+          }
+        }}
+        isLoading={unsubscribeMutation.isPending}
+      />
     </Layout>
   );
 }

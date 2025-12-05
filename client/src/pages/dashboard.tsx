@@ -1,10 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import { Link } from "wouter";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Wallet,
   TrendingUp,
@@ -16,13 +19,21 @@ import {
   AppWindow,
   Activity,
   RefreshCw,
+  CheckCircle2,
+  CircleDot,
+  Power,
+  PowerOff,
+  Loader2,
+  ExternalLink,
 } from "lucide-react";
 import type { Wallet as WalletType, WalletTransaction, AppSubscription, App } from "@shared/schema";
+import { useState } from "react";
 
 interface DashboardData {
   wallet: WalletType | null;
   recentTransactions: (WalletTransaction & { app?: App | null })[];
   subscriptions: (AppSubscription & { app: App })[];
+  allApps: App[];
   stats: {
     totalCredits: number;
     monthlySpend: number;
@@ -44,6 +55,13 @@ function formatDate(date: string | Date): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+  }).format(new Date(date));
+}
+
+function formatDateShort(date: string | Date): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
   }).format(new Date(date));
 }
 
@@ -99,7 +117,7 @@ function StatCard({
   );
 }
 
-function TransactionItem({
+function CompactTransactionItem({
   transaction,
 }: {
   transaction: WalletTransaction & { app?: App | null };
@@ -107,71 +125,138 @@ function TransactionItem({
   const isCredit = transaction.type === "CREDIT";
 
   return (
-    <div className="flex items-center justify-between py-3 border-b last:border-0">
-      <div className="flex items-center gap-3">
+    <div className="flex items-center justify-between py-2 border-b last:border-0">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
         <div
-          className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+          className={`flex h-6 w-6 items-center justify-center rounded shrink-0 ${
             isCredit ? "bg-chart-2/10" : "bg-destructive/10"
           }`}
         >
           {isCredit ? (
-            <ArrowDownRight className="h-4 w-4 text-chart-2" />
+            <ArrowDownRight className="h-3 w-3 text-chart-2" />
           ) : (
-            <ArrowUpRight className="h-4 w-4 text-destructive" />
+            <ArrowUpRight className="h-3 w-3 text-destructive" />
           )}
         </div>
-        <div>
-          <p className="text-sm font-medium" data-testid={`transaction-desc-${transaction.id}`}>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium truncate" data-testid={`transaction-desc-${transaction.id}`}>
             {transaction.description}
           </p>
-          <p className="text-xs text-muted-foreground">
-            {transaction.app?.name || transaction.source.replace(/_/g, " ")} • {formatDate(transaction.createdAt)}
+          <p className="text-xs text-muted-foreground truncate">
+            {formatDateShort(transaction.createdAt)}
           </p>
         </div>
       </div>
-      <div className="text-right">
-        <p
-          className={`text-sm font-semibold tabular-nums ${
-            isCredit ? "text-chart-2" : "text-foreground"
-          }`}
-          data-testid={`transaction-amount-${transaction.id}`}
-        >
-          {isCredit ? "+" : "-"}{formatCurrency(transaction.amountCents)}
-        </p>
-        <Badge
-          variant={
-            transaction.status === "COMPLETED"
-              ? "default"
-              : transaction.status === "PENDING"
-              ? "secondary"
-              : "destructive"
-          }
-          className="text-xs"
-        >
-          {transaction.status.toLowerCase()}
-        </Badge>
-      </div>
+      <p
+        className={`text-xs font-semibold tabular-nums shrink-0 ml-2 ${
+          isCredit ? "text-chart-2" : "text-foreground"
+        }`}
+        data-testid={`transaction-amount-${transaction.id}`}
+      >
+        {isCredit ? "+" : "-"}{formatCurrency(transaction.amountCents)}
+      </p>
     </div>
   );
 }
 
-function SubscriptionItem({ subscription }: { subscription: AppSubscription & { app: App } }) {
+function AppCard({
+  app,
+  subscription,
+  onConnect,
+  onDisconnect,
+  isLoading,
+}: {
+  app: App;
+  subscription?: AppSubscription;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  isLoading: boolean;
+}) {
+  const isConnected = subscription?.status === "ACTIVE" || subscription?.status === "PAUSED";
+
   return (
-    <div className="flex items-center justify-between py-3 border-b last:border-0">
-      <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
-          <AppWindow className="h-4 w-4 text-muted-foreground" />
+    <div className={`p-4 rounded-lg border ${isConnected ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
+      <div className="flex items-start gap-3">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-lg shrink-0 ${
+          isConnected ? 'bg-emerald-500/20' : 'bg-destructive/20'
+        }`}>
+          <AppWindow className={`h-5 w-5 ${isConnected ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`} />
         </div>
-        <div>
-          <p className="text-sm font-medium" data-testid={`subscription-name-${subscription.id}`}>
-            {subscription.app.name}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h4 className="font-medium text-sm truncate" data-testid={`dashboard-app-name-${app.id}`}>
+              {app.name}
+            </h4>
+            <Badge 
+              variant={isConnected ? "default" : "destructive"}
+              className="text-xs h-5"
+            >
+              {isConnected ? (
+                <>
+                  <CheckCircle2 className="h-2.5 w-2.5 mr-1" />
+                  Connected
+                </>
+              ) : (
+                <>
+                  <CircleDot className="h-2.5 w-2.5 mr-1" />
+                  Disconnected
+                </>
+              )}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
+            {app.description}
           </p>
-          <p className="text-xs text-muted-foreground">{subscription.app.pricingModel}</p>
         </div>
       </div>
-      <Badge variant={subscription.status === "ACTIVE" ? "default" : "secondary"}>
-        {subscription.status.toLowerCase()}
-      </Badge>
+      
+      <div className="flex items-center gap-2 mt-3">
+        {isConnected ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1 h-8 text-xs"
+            onClick={onDisconnect}
+            disabled={isLoading}
+            data-testid={`dashboard-disconnect-${app.id}`}
+          >
+            {isLoading ? (
+              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            ) : (
+              <PowerOff className="h-3 w-3 mr-1" />
+            )}
+            Disconnect
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            className="flex-1 h-8 text-xs"
+            onClick={onConnect}
+            disabled={isLoading}
+            data-testid={`dashboard-connect-${app.id}`}
+          >
+            {isLoading ? (
+              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            ) : (
+              <Power className="h-3 w-3 mr-1" />
+            )}
+            Connect
+          </Button>
+        )}
+        {app.callbackUrl && (
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            asChild
+            data-testid={`dashboard-visit-${app.id}`}
+          >
+            <a href={app.callbackUrl} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -180,6 +265,67 @@ export default function DashboardPage() {
   const { data, isLoading, refetch, isRefetching } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
   });
+  const { toast } = useToast();
+  const [loadingAppId, setLoadingAppId] = useState<string | null>(null);
+
+  const subscribeMutation = useMutation({
+    mutationFn: async (appId: string) => {
+      return apiRequest("POST", `/api/apps/${appId}/subscribe`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/apps"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "App connected!", description: "You've granted this app permission to use your credits." });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to connect",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setLoadingAppId(null);
+    },
+  });
+
+  const unsubscribeMutation = useMutation({
+    mutationFn: async (appId: string) => {
+      return apiRequest("POST", `/api/apps/${appId}/unsubscribe`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/apps"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "App disconnected", description: "The app has been removed from your account." });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to disconnect",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      setLoadingAppId(null);
+    },
+  });
+
+  const getSubscription = (appId: string) =>
+    data?.subscriptions?.find((s) => s.appId === appId);
+
+  const allApps = data?.allApps ?? [];
+  
+  const connectedApps = allApps.filter((app) => {
+    const sub = getSubscription(app.id);
+    return sub?.status === "ACTIVE" || sub?.status === "PAUSED";
+  });
+
+  const disconnectedApps = allApps.filter((app) => {
+    const sub = getSubscription(app.id);
+    return !sub || sub.status === "CANCELLED" || sub.status === "EXPIRED" || sub.status === "PENDING";
+  });
+
+  const sortedApps = [...connectedApps, ...disconnectedApps];
 
   return (
     <Layout>
@@ -246,108 +392,116 @@ export default function DashboardPage() {
           <Card className="lg:col-span-2">
             <CardHeader className="flex flex-row items-center justify-between gap-4">
               <div>
-                <CardTitle className="text-lg">Recent Transactions</CardTitle>
-                <CardDescription>Your latest credit activity</CardDescription>
-              </div>
-              <Link href="/wallet">
-                <Button variant="ghost" size="sm" data-testid="link-view-all-transactions">
-                  View all
-                </Button>
-              </Link>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <div className="space-y-4">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-3">
-                        <Skeleton className="h-9 w-9 rounded-lg" />
-                        <div className="space-y-1">
-                          <Skeleton className="h-4 w-32" />
-                          <Skeleton className="h-3 w-24" />
-                        </div>
-                      </div>
-                      <div className="text-right space-y-1">
-                        <Skeleton className="h-4 w-16 ml-auto" />
-                        <Skeleton className="h-5 w-20 ml-auto" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : data?.recentTransactions && data.recentTransactions.length > 0 ? (
-                <div>
-                  {data.recentTransactions.map((transaction) => (
-                    <TransactionItem key={transaction.id} transaction={transaction} />
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
-                    <Activity className="h-6 w-6 text-muted-foreground" />
-                  </div>
-                  <p className="text-sm font-medium">No transactions yet</p>
-                  <p className="text-sm text-muted-foreground">
-                    Add funds to your wallet to get started
-                  </p>
-                  <Link href="/wallet">
-                    <Button className="mt-4" size="sm" data-testid="button-add-funds-empty">
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Funds
-                    </Button>
-                  </Link>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-4">
-              <div>
-                <CardTitle className="text-lg">Connected Services</CardTitle>
-                <CardDescription>Your authorized integrations</CardDescription>
+                <CardTitle className="text-lg">Services</CardTitle>
+                <CardDescription>
+                  {connectedApps.length} connected, {disconnectedApps.length} available
+                </CardDescription>
               </div>
               <Link href="/apps">
                 <Button variant="ghost" size="sm" data-testid="link-view-all-apps">
-                  View all
+                  Manage
                 </Button>
               </Link>
             </CardHeader>
             <CardContent>
               {isLoading ? (
-                <div className="space-y-4">
-                  {[...Array(3)].map((_, i) => (
-                    <div key={i} className="flex items-center justify-between py-3">
-                      <div className="flex items-center gap-3">
-                        <Skeleton className="h-9 w-9 rounded-lg" />
-                        <div className="space-y-1">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="p-4 rounded-lg border">
+                      <div className="flex items-start gap-3">
+                        <Skeleton className="h-10 w-10 rounded-lg" />
+                        <div className="flex-1 space-y-2">
                           <Skeleton className="h-4 w-24" />
-                          <Skeleton className="h-3 w-16" />
+                          <Skeleton className="h-3 w-full" />
                         </div>
                       </div>
-                      <Skeleton className="h-5 w-16" />
+                      <Skeleton className="h-8 w-full mt-3" />
                     </div>
                   ))}
                 </div>
-              ) : data?.subscriptions && data.subscriptions.length > 0 ? (
-                <div>
-                  {data.subscriptions.map((subscription) => (
-                    <SubscriptionItem key={subscription.id} subscription={subscription} />
-                  ))}
+              ) : sortedApps.length > 0 ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {sortedApps.map((app) => {
+                    const subscription = getSubscription(app.id);
+                    return (
+                      <AppCard
+                        key={app.id}
+                        app={app}
+                        subscription={subscription}
+                        onConnect={() => {
+                          setLoadingAppId(app.id);
+                          subscribeMutation.mutate(app.id);
+                        }}
+                        onDisconnect={() => {
+                          setLoadingAppId(app.id);
+                          unsubscribeMutation.mutate(app.id);
+                        }}
+                        isLoading={loadingAppId === app.id}
+                      />
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
                     <AppWindow className="h-6 w-6 text-muted-foreground" />
                   </div>
-                  <p className="text-sm font-medium">No connected services</p>
+                  <p className="text-sm font-medium">No services available</p>
                   <p className="text-sm text-muted-foreground">
-                    Connect a service to get started
+                    Check back later for new services
                   </p>
-                  <Link href="/apps">
-                    <Button className="mt-4" size="sm" data-testid="button-browse-apps-empty">
-                      Browse Services
-                    </Button>
-                  </Link>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-4 pb-2">
+              <div>
+                <CardTitle className="text-base">Recent Activity</CardTitle>
+              </div>
+              <Link href="/wallet">
+                <Button variant="ghost" size="sm" className="h-7 text-xs" data-testid="link-view-all-transactions">
+                  View all
+                </Button>
+              </Link>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {isLoading ? (
+                <div className="space-y-2">
+                  {[...Array(5)].map((_, i) => (
+                    <div key={i} className="flex items-center justify-between py-2">
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-6 w-6 rounded" />
+                        <div className="space-y-1">
+                          <Skeleton className="h-3 w-20" />
+                          <Skeleton className="h-2 w-12" />
+                        </div>
+                      </div>
+                      <Skeleton className="h-3 w-12" />
+                    </div>
+                  ))}
+                </div>
+              ) : data?.recentTransactions && data.recentTransactions.length > 0 ? (
+                <div>
+                  {data.recentTransactions.slice(0, 6).map((transaction) => (
+                    <CompactTransactionItem key={transaction.id} transaction={transaction} />
+                  ))}
+                  {data.recentTransactions.length > 6 && (
+                    <p className="text-xs text-muted-foreground text-center mt-2">
+                      +{data.recentTransactions.length - 6} more transactions
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-center">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted mb-3">
+                    <Activity className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <p className="text-xs font-medium">No activity yet</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Add funds to get started
+                  </p>
                 </div>
               )}
             </CardContent>
