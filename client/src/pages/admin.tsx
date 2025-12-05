@@ -63,6 +63,8 @@ import {
   FileJson,
   Info,
   CreditCard,
+  HeartPulse,
+  RefreshCw,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
@@ -3064,6 +3066,362 @@ function PaymentGatewaysTab() {
   );
 }
 
+interface IntegrationHealthData {
+  summary: {
+    total_apps: number;
+    active_apps: number;
+    quarantined_count: number;
+    low_health_count: number;
+  };
+  quarantined_apps: AppHealthInfo[];
+  low_health_apps: AppHealthInfo[];
+  all_apps: AppHealthInfo[];
+}
+
+interface AppHealthInfo {
+  app_id: string;
+  app_name: string;
+  client_id: string;
+  is_active: boolean;
+  health: {
+    score: number;
+    quarantined: boolean;
+    quarantine_reason: string | null;
+    quarantined_at: string | null;
+    last_success: string | null;
+    last_failure: string | null;
+    oauth_success_rate: number | null;
+    api_call_success_rate: number | null;
+    webhook_success_rate: number | null;
+  } | null;
+  recent_errors: Array<{
+    timestamp: string;
+    event: string;
+    error_code: string;
+    error_class: string;
+    trace_id: string;
+  }>;
+}
+
+function IntegrationHealthTab() {
+  const { toast } = useToast();
+  const [expandedApp, setExpandedApp] = useState<string | null>(null);
+
+  const { data: healthData, isLoading, refetch } = useQuery<IntegrationHealthData>({
+    queryKey: ["/api/admin/integration-health"],
+    refetchInterval: 30000,
+  });
+
+  const unquarantineMutation = useMutation({
+    mutationFn: async (appId: string) => {
+      return apiRequest("POST", `/api/admin/integration-health/${appId}/unquarantine`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/integration-health"] });
+      toast({ title: "App unquarantined", description: "The app has been removed from quarantine and metrics reset." });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to unquarantine app",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const getHealthScoreColor = (score: number | null): string => {
+    if (score === null) return "text-muted-foreground";
+    if (score >= 80) return "text-green-600 dark:text-green-400";
+    if (score >= 50) return "text-amber-600 dark:text-amber-400";
+    return "text-red-600 dark:text-red-400";
+  };
+
+  const getHealthBadge = (health: AppHealthInfo["health"]) => {
+    if (!health) {
+      return <Badge variant="secondary">No Data</Badge>;
+    }
+    if (health.quarantined) {
+      return <Badge variant="destructive">Quarantined</Badge>;
+    }
+    if (health.score >= 80) {
+      return <Badge variant="default" className="bg-green-600">Healthy</Badge>;
+    }
+    if (health.score >= 50) {
+      return <Badge variant="secondary" className="bg-amber-500 text-white">Degraded</Badge>;
+    }
+    return <Badge variant="destructive">Critical</Badge>;
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-semibold" data-testid="text-health-title">Integration Health</h2>
+          <p className="text-sm text-muted-foreground">Monitor app connection health and diagnose issues</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => refetch()}
+          disabled={isLoading}
+          data-testid="button-refresh-health"
+        >
+          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+          Refresh
+        </Button>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-4">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-24 w-full" />
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                    <AppWindow className="h-5 w-5 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums" data-testid="text-total-apps">
+                      {healthData?.summary.total_apps ?? 0}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Total Apps</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900/20">
+                    <HeartPulse className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums text-green-600 dark:text-green-400" data-testid="text-healthy-apps">
+                      {(healthData?.summary.active_apps ?? 0) - (healthData?.summary.quarantined_count ?? 0) - (healthData?.summary.low_health_count ?? 0)}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Healthy</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/20">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums text-amber-600 dark:text-amber-400" data-testid="text-degraded-apps">
+                      {healthData?.summary.low_health_count ?? 0}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Degraded</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center gap-4">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-100 dark:bg-red-900/20">
+                    <Shield className="h-5 w-5 text-red-600 dark:text-red-400" />
+                  </div>
+                  <div>
+                    <p className="text-xl font-semibold tabular-nums text-red-600 dark:text-red-400" data-testid="text-quarantined-apps">
+                      {healthData?.summary.quarantined_count ?? 0}
+                    </p>
+                    <p className="text-sm text-muted-foreground">Quarantined</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {healthData?.quarantined_apps && healthData.quarantined_apps.length > 0 && (
+            <Card className="border-red-200 dark:border-red-900">
+              <CardHeader>
+                <CardTitle className="text-red-600 dark:text-red-400 flex items-center gap-2">
+                  <Shield className="h-5 w-5" />
+                  Quarantined Apps
+                </CardTitle>
+                <CardDescription>These apps have been automatically quarantined due to low health scores.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {healthData.quarantined_apps.map((app) => (
+                    <div key={app.app_id} className="rounded-lg border border-red-200 dark:border-red-900 p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="font-medium" data-testid={`text-app-name-${app.app_id}`}>{app.app_name}</h4>
+                          <p className="text-sm text-muted-foreground">Health Score: {app.health?.score ?? "N/A"}%</p>
+                          {app.health?.quarantine_reason && (
+                            <p className="text-sm text-red-600 dark:text-red-400 mt-1">{app.health.quarantine_reason}</p>
+                          )}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => unquarantineMutation.mutate(app.app_id)}
+                          disabled={unquarantineMutation.isPending}
+                          data-testid={`button-unquarantine-${app.app_id}`}
+                        >
+                          {unquarantineMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Unquarantine
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>All Integrations</CardTitle>
+              <CardDescription>Health status for all registered apps</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>App</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Health Score</TableHead>
+                    <TableHead>OAuth Success</TableHead>
+                    <TableHead>API Success</TableHead>
+                    <TableHead>Webhooks</TableHead>
+                    <TableHead>Last Activity</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {healthData?.all_apps.map((app) => (
+                    <TableRow
+                      key={app.app_id}
+                      className="cursor-pointer hover-elevate"
+                      onClick={() => setExpandedApp(expandedApp === app.app_id ? null : app.app_id)}
+                      data-testid={`row-app-${app.app_id}`}
+                    >
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{app.app_name}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{app.client_id.substring(0, 20)}...</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>{getHealthBadge(app.health)}</TableCell>
+                      <TableCell>
+                        <span className={`font-semibold tabular-nums ${getHealthScoreColor(app.health?.score ?? null)}`}>
+                          {app.health?.score ?? "—"}%
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        {app.health?.oauth_success_rate !== null ? (
+                          <span className={getHealthScoreColor(app.health?.oauth_success_rate ?? null)}>
+                            {app.health?.oauth_success_rate}%
+                          </span>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {app.health?.api_call_success_rate !== null ? (
+                          <span className={getHealthScoreColor(app.health?.api_call_success_rate ?? null)}>
+                            {app.health?.api_call_success_rate}%
+                          </span>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {app.health?.webhook_success_rate !== null ? (
+                          <span className={getHealthScoreColor(app.health?.webhook_success_rate ?? null)}>
+                            {app.health?.webhook_success_rate}%
+                          </span>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {app.health?.last_success || app.health?.last_failure ? (
+                          new Intl.DateTimeFormat("en-US", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          }).format(new Date(app.health.last_success || app.health.last_failure!))
+                        ) : "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {(!healthData?.all_apps || healthData.all_apps.length === 0) && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                        No apps registered
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          {expandedApp && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Errors - {healthData?.all_apps.find(a => a.app_id === expandedApp)?.app_name}</CardTitle>
+                <CardDescription>Recent OAuth errors for debugging</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-64">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Time</TableHead>
+                        <TableHead>Event</TableHead>
+                        <TableHead>Error Code</TableHead>
+                        <TableHead>Class</TableHead>
+                        <TableHead>Trace ID</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {healthData?.all_apps
+                        .find(a => a.app_id === expandedApp)
+                        ?.recent_errors.map((error, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
+                              {new Intl.DateTimeFormat("en-US", {
+                                dateStyle: "short",
+                                timeStyle: "medium",
+                              }).format(new Date(error.timestamp))}
+                            </TableCell>
+                            <TableCell className="font-medium">{error.event}</TableCell>
+                            <TableCell>
+                              <Badge variant="destructive">{error.error_code}</Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">{error.error_class}</Badge>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs text-muted-foreground">
+                              {error.trace_id.substring(0, 20)}...
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      {(!healthData?.all_apps.find(a => a.app_id === expandedApp)?.recent_errors.length) && (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center py-4 text-muted-foreground">
+                            No recent errors
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
 
@@ -3116,6 +3474,10 @@ export default function AdminPage() {
               <CreditCard className="h-4 w-4" />
               Payments
             </TabsTrigger>
+            <TabsTrigger value="integration-health" className="gap-2" data-testid="tab-integration-health">
+              <HeartPulse className="h-4 w-4" />
+              Health
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="users">
@@ -3140,6 +3502,10 @@ export default function AdminPage() {
 
           <TabsContent value="payment-gateways">
             <PaymentGatewaysTab />
+          </TabsContent>
+
+          <TabsContent value="integration-health">
+            <IntegrationHealthTab />
           </TabsContent>
         </Tabs>
       </div>
