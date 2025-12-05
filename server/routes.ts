@@ -2641,6 +2641,181 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/admin/payment-gateways", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { getAvailablePaymentGateways } = await import("./payments");
+      const gateways = await getAvailablePaymentGateways();
+      res.json(gateways);
+    } catch (error) {
+      console.error("Get payment gateways error:", error);
+      res.status(500).json({ message: "Failed to get payment gateways" });
+    }
+  });
+
+  app.patch("/api/admin/payment-gateways/:gateway", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const gateway = req.params.gateway.toUpperCase() as "STRIPE" | "PAYPAL" | "COINBASE";
+      const { enabled, sandboxMode } = req.body;
+
+      if (!["STRIPE", "PAYPAL", "COINBASE"].includes(gateway)) {
+        return res.status(400).json({ message: "Invalid gateway" });
+      }
+
+      const updateData: Record<string, any> = {};
+      if (typeof enabled === "boolean") {
+        updateData.enabled = enabled;
+      }
+      if (typeof sandboxMode === "boolean") {
+        updateData.sandboxMode = sandboxMode;
+      }
+
+      const updated = await storage.updatePaymentGatewaySettings(gateway, updateData);
+      if (!updated) {
+        return res.status(404).json({ message: "Gateway settings not found" });
+      }
+
+      await createAuditLog(
+        req, 
+        "ADMIN_ACTION", 
+        `Updated ${gateway} payment gateway settings`,
+        req.user!.id, 
+        "payment_gateway", 
+        gateway, 
+        updateData
+      );
+
+      const { getAvailablePaymentGateways } = await import("./payments");
+      const gateways = await getAvailablePaymentGateways();
+      const gatewayStatus = gateways.find(g => g.gateway === gateway);
+      
+      res.json(gatewayStatus);
+    } catch (error) {
+      console.error("Update payment gateway error:", error);
+      res.status(500).json({ message: "Failed to update payment gateway" });
+    }
+  });
+
+  app.get("/api/payment-gateways/enabled", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { getEnabledPaymentGateways } = await import("./payments");
+      const gateways = await getEnabledPaymentGateways();
+      res.json(gateways);
+    } catch (error) {
+      console.error("Get enabled payment gateways error:", error);
+      res.status(500).json({ message: "Failed to get payment gateways" });
+    }
+  });
+
+  app.get("/api/payment-gateways/config", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { getClientConfig } = await import("./payments");
+      const config = await getClientConfig();
+      res.json(config);
+    } catch (error) {
+      console.error("Get payment config error:", error);
+      res.status(500).json({ message: "Failed to get payment config" });
+    }
+  });
+
+  app.post("/api/payments/create-intent", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { gateway, amountCents, paymentMethodId } = req.body;
+      
+      if (!gateway || !amountCents || amountCents < 100) {
+        return res.status(400).json({ message: "Gateway and amount (min $1.00) required" });
+      }
+
+      const user = await storage.getUser(req.user!.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const wallet = await storage.getWalletByUserId(req.user!.id);
+      if (!wallet) {
+        return res.status(404).json({ message: "Wallet not found" });
+      }
+
+      const transaction = await storage.createTransaction({
+        walletId: wallet.id,
+        type: "CREDIT",
+        source: "FUNDING",
+        amountCents,
+        description: `Wallet funding via ${gateway}`,
+        status: "PENDING",
+        appId: null,
+      });
+
+      const { processPayment } = await import("./payments");
+      const baseUrl = `https://${process.env.REPLIT_DOMAINS?.split(",")[0] || "localhost:5000"}`;
+      
+      const result = await processPayment(gateway, amountCents, req.user!.id, {
+        paymentMethodId,
+        returnUrl: `${baseUrl}/wallet?payment=success&tx=${transaction.id}`,
+        cancelUrl: `${baseUrl}/wallet?payment=cancel&tx=${transaction.id}`,
+        description: `Wallet funding - $${(amountCents / 100).toFixed(2)}`,
+        metadata: { transactionId: transaction.id, userId: req.user!.id },
+      });
+
+      if (!result.success) {
+        await storage.updateTransactionStatus(transaction.id, "FAILED");
+        return res.status(400).json({ message: result.error });
+      }
+
+      res.json({
+        transactionId: transaction.id,
+        externalId: result.externalId,
+        clientSecret: result.clientSecret,
+        redirectUrl: result.redirectUrl,
+        requiresAction: result.requiresAction,
+      });
+    } catch (error) {
+      console.error("Create payment intent error:", error);
+      res.status(500).json({ message: "Failed to create payment" });
+    }
+  });
+
+  app.post("/api/payments/confirm", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { gateway, externalId, transactionId } = req.body;
+
+      if (!gateway || !externalId || !transactionId) {
+        return res.status(400).json({ message: "Gateway, externalId, and transactionId required" });
+      }
+
+      const { confirmPayment } = await import("./payments");
+      const result = await confirmPayment(gateway, externalId);
+
+      if (result.success && result.status === "COMPLETED") {
+        await storage.updateTransactionStatus(transactionId, "COMPLETED");
+        
+        const wallet = await storage.getWalletByUserId(req.user!.id);
+        if (wallet) {
+          const tx = await storage.getTransactionsByWalletId(wallet.id, 1);
+          const matchingTx = tx.find(t => t.id === transactionId);
+          if (matchingTx) {
+            await storage.updateWalletBalance(wallet.id, matchingTx.amountCents);
+          }
+        }
+
+        await createAuditLog(
+          req,
+          "WALLET_FUND",
+          `Wallet funded via ${gateway}`,
+          req.user!.id,
+          "transaction",
+          transactionId
+        );
+      } else {
+        await storage.updateTransactionStatus(transactionId, "FAILED");
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error("Confirm payment error:", error);
+      res.status(500).json({ message: "Failed to confirm payment" });
+    }
+  });
+
   return httpServer;
 }
 

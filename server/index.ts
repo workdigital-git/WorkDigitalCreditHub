@@ -4,6 +4,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startBackgroundJobs } from "./background-jobs";
+import { storage } from "./storage";
 
 const app = express();
 
@@ -121,8 +122,16 @@ app.use((req, res, next) => {
       host: "0.0.0.0",
       reusePort: true,
     },
-    () => {
+    async () => {
       log(`serving on port ${port}`);
+      
+      try {
+        await storage.initializePaymentGateways();
+        log("Payment gateways initialized");
+      } catch (error) {
+        console.error("Failed to initialize payment gateways:", error);
+      }
+      
       startBackgroundJobs(60000);
     },
   );
