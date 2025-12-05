@@ -1126,23 +1126,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           break;
       }
 
-      const subscription = await storage.createAppSubscription({
-        userId: req.user!.id,
-        appId: req.params.id,
-        billingCycle: billingCycle as "MONTHLY" | "YEARLY" | "PER_USE",
-        status: "ACTIVE",
-        currentPeriodEnd: periodEnd,
-        nextBillingDate,
-        totalUsageCount: 0,
-        cancelledAt: null,
-        lastBilledAt: null,
-      });
+      let subscription;
+      
+      // If there's an existing subscription (cancelled, expired, etc.), reactivate it
+      if (existing) {
+        subscription = await storage.updateAppSubscription(existing.id, {
+          status: "ACTIVE",
+          billingCycle: billingCycle as "MONTHLY" | "YEARLY" | "PER_USE",
+          currentPeriodEnd: periodEnd,
+          nextBillingDate,
+          cancelledAt: null,
+        });
+        
+        await createAuditLog(req, "APP_SUBSCRIBE", "Resubscribed to app", req.user!.id, "app", req.params.id, { 
+          appName: app.name, 
+          billingCycle,
+          subscriptionId: existing.id,
+          resubscribed: true,
+        });
+      } else {
+        // Create new subscription
+        subscription = await storage.createAppSubscription({
+          userId: req.user!.id,
+          appId: req.params.id,
+          billingCycle: billingCycle as "MONTHLY" | "YEARLY" | "PER_USE",
+          status: "ACTIVE",
+          currentPeriodEnd: periodEnd,
+          nextBillingDate,
+          totalUsageCount: 0,
+          cancelledAt: null,
+          lastBilledAt: null,
+        });
 
-      await createAuditLog(req, "APP_SUBSCRIBE", "Subscribed to app", req.user!.id, "app", req.params.id, { 
-        appName: app.name, 
-        billingCycle,
-        subscriptionId: subscription.id,
-      });
+        await createAuditLog(req, "APP_SUBSCRIBE", "Subscribed to app", req.user!.id, "app", req.params.id, { 
+          appName: app.name, 
+          billingCycle,
+          subscriptionId: subscription.id,
+        });
+      }
 
       res.json({ success: true, subscription });
     } catch (error) {
@@ -1777,6 +1798,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       await logOAuthEvent(ctx, "CODE_CREATED", "SUCCESS", undefined, undefined, { codePrefix: authCode.substring(0, 8) });
 
+      // Activate app subscription when user authorizes via OAuth
+      const existingSubscription = await storage.getAppSubscription(req.user!.id, appRecord.id);
+      if (existingSubscription) {
+        if (existingSubscription.status !== "ACTIVE") {
+          await storage.updateAppSubscription(existingSubscription.id, { 
+            status: "ACTIVE",
+            cancelledAt: null,
+          });
+          await logOAuthEvent(ctx, "SUBSCRIPTION_ACTIVATED", "SUCCESS", undefined, undefined, { subscriptionId: existingSubscription.id });
+        }
+      } else {
+        const newSubscription = await storage.createAppSubscription({
+          userId: req.user!.id,
+          appId: appRecord.id,
+          status: "ACTIVE",
+          billingCycle: "MONTHLY",
+          currentPeriodEnd: null,
+          nextBillingDate: null,
+          lastBilledAt: null,
+          totalUsageCount: 0,
+          cancelledAt: null,
+        });
+        await logOAuthEvent(ctx, "SUBSCRIPTION_CREATED", "SUCCESS", undefined, undefined, { subscriptionId: newSubscription.id });
+      }
+
       const redirectUrl = new URL(redirect_uri);
       redirectUrl.searchParams.append("code", authCode);
       if (state) {
@@ -2078,8 +2124,32 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         codeChallengeMethod: null,
         scope: null,
         state: null,
+        authorizeTraceId: null,
         expiresAt,
       });
+
+      // Activate app subscription when user authorizes via SSO
+      const existingSubscription = await storage.getAppSubscription(req.user!.id, appRecord.id);
+      if (existingSubscription) {
+        if (existingSubscription.status !== "ACTIVE") {
+          await storage.updateAppSubscription(existingSubscription.id, { 
+            status: "ACTIVE",
+            cancelledAt: null,
+          });
+        }
+      } else {
+        await storage.createAppSubscription({
+          userId: req.user!.id,
+          appId: appRecord.id,
+          status: "ACTIVE",
+          billingCycle: "MONTHLY",
+          currentPeriodEnd: null,
+          nextBillingDate: null,
+          lastBilledAt: null,
+          totalUsageCount: 0,
+          cancelledAt: null,
+        });
+      }
 
       res.json({ 
         code: authCode, 
