@@ -62,7 +62,9 @@ import {
   Globe,
   FileJson,
   Info,
+  CreditCard,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
 
 interface AppApiKey {
@@ -2873,6 +2875,195 @@ function OAuthAuditLogsTab() {
   );
 }
 
+interface PaymentGatewayStatus {
+  gateway: "STRIPE" | "PAYPAL" | "COINBASE";
+  displayName: string;
+  enabled: boolean;
+  configured: boolean;
+  sandboxMode: boolean;
+  supportedMethods: string[];
+}
+
+function PaymentGatewaysTab() {
+  const { toast } = useToast();
+
+  const { data: gateways, isLoading } = useQuery<PaymentGatewayStatus[]>({
+    queryKey: ["/api/admin/payment-gateways"],
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async ({ gateway, enabled, sandboxMode }: { gateway: string; enabled?: boolean; sandboxMode?: boolean }) => {
+      return apiRequest("PATCH", `/api/admin/payment-gateways/${gateway}`, {
+        enabled,
+        sandboxMode,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/payment-gateways"] });
+      toast({ title: "Settings updated", description: "Payment gateway configuration saved." });
+    },
+    onError: (error) => {
+      toast({
+        title: "Update failed",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const gatewayIcons: Record<string, any> = {
+    STRIPE: () => (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M13.976 9.15c-2.172-.806-3.356-1.426-3.356-2.409 0-.831.683-1.305 1.901-1.305 2.227 0 4.515.858 6.09 1.631l.89-5.494C18.252.975 15.697 0 12.165 0 9.667 0 7.589.654 6.104 1.872 4.56 3.147 3.757 4.992 3.757 7.218c0 4.039 2.467 5.76 6.476 7.219 2.585.92 3.445 1.574 3.445 2.583 0 .98-.84 1.545-2.354 1.545-1.875 0-4.965-.921-6.99-2.109l-.9 5.555C5.175 22.99 8.385 24 11.714 24c2.641 0 4.843-.624 6.328-1.813 1.664-1.305 2.525-3.236 2.525-5.732 0-4.128-2.524-5.851-6.594-7.305h.003z"/>
+      </svg>
+    ),
+    PAYPAL: () => (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M7.076 21.337H2.47a.641.641 0 0 1-.633-.74L4.944.901C5.026.382 5.474 0 5.998 0h7.46c2.57 0 4.578.543 5.69 1.81 1.01 1.15 1.304 2.42 1.012 4.287-.023.143-.047.288-.077.437-.983 5.05-4.349 6.797-8.647 6.797h-2.19c-.524 0-.968.382-1.05.9l-1.12 7.106zm14.146-14.42a3.35 3.35 0 0 0-.607-.541c1.91 1.8 2.52 4.66 1.15 8.04-1.527 3.77-4.976 5.757-9.77 5.757H7.88l-1.327 8.401c-.032.202.09.396.292.432.028.005.054.008.08.008h3.872c.433 0 .806-.317.867-.746l.787-4.984c.06-.429.434-.746.867-.746h.544c3.506 0 6.253-1.422 7.058-5.534.336-1.7.17-3.098-.698-4.087z"/>
+      </svg>
+    ),
+    COINBASE: () => (
+      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 19.5c-4.136 0-7.5-3.364-7.5-7.5S7.864 4.5 12 4.5s7.5 3.364 7.5 7.5-3.364 7.5-7.5 7.5zm3.75-10.125h-2.25v1.5h2.25v2.25h-2.25v1.5h2.25v2.25H8.25v-2.25h2.25v-1.5H8.25v-2.25h2.25v-1.5H8.25V6.375h7.5v3z"/>
+      </svg>
+    ),
+  };
+
+  const methodLabels: Record<string, string> = {
+    CARD: "Credit/Debit Cards",
+    BANK_ACH: "ACH Bank Transfer",
+    PAYPAL: "PayPal",
+    VENMO: "Venmo",
+    CRYPTO: "Cryptocurrency",
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CreditCard className="h-5 w-5" />
+          Payment Gateways
+        </CardTitle>
+        <CardDescription>
+          Configure which payment methods are available for wallet funding. API keys are managed via environment variables.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-4">
+            {[...Array(3)].map((_, i) => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {gateways?.map((gateway) => {
+              const IconComponent = gatewayIcons[gateway.gateway];
+              return (
+                <div
+                  key={gateway.gateway}
+                  className="rounded-lg border p-4 space-y-4"
+                  data-testid={`gateway-card-${gateway.gateway.toLowerCase()}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                        {IconComponent && <IconComponent />}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-medium">{gateway.displayName}</h3>
+                          {gateway.configured ? (
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400 dark:border-green-800">
+                              <Check className="h-3 w-3 mr-1" />
+                              Configured
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-400 dark:border-amber-800">
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              Not Configured
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {gateway.supportedMethods.map((m) => methodLabels[m] || m).join(", ")}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id={`enabled-${gateway.gateway}`}
+                          checked={gateway.enabled}
+                          disabled={!gateway.configured || updateMutation.isPending}
+                          onCheckedChange={(checked) =>
+                            updateMutation.mutate({ gateway: gateway.gateway, enabled: checked })
+                          }
+                          data-testid={`switch-enabled-${gateway.gateway.toLowerCase()}`}
+                        />
+                        <Label htmlFor={`enabled-${gateway.gateway}`} className="text-sm">
+                          {gateway.enabled ? "Enabled" : "Disabled"}
+                        </Label>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {gateway.enabled && gateway.configured && (
+                    <div className="flex items-center justify-between pt-2 border-t">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-muted-foreground">Mode:</span>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={gateway.sandboxMode ? "secondary" : "default"}
+                            className="text-xs"
+                          >
+                            {gateway.sandboxMode ? "Sandbox / Test" : "Live / Production"}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor={`sandbox-${gateway.gateway}`} className="text-sm text-muted-foreground">
+                          Sandbox Mode
+                        </Label>
+                        <Switch
+                          id={`sandbox-${gateway.gateway}`}
+                          checked={gateway.sandboxMode}
+                          disabled={updateMutation.isPending}
+                          onCheckedChange={(checked) =>
+                            updateMutation.mutate({ gateway: gateway.gateway, sandboxMode: checked })
+                          }
+                          data-testid={`switch-sandbox-${gateway.gateway.toLowerCase()}`}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {!gateway.configured && (
+                    <div className="rounded-md bg-muted p-3 text-sm">
+                      <p className="font-medium mb-1">Configuration Required</p>
+                      <p className="text-muted-foreground">
+                        {gateway.gateway === "STRIPE" && "Stripe is configured via Replit's Stripe connector. Enable it in the Secrets tab."}
+                        {gateway.gateway === "PAYPAL" && "Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET environment variables."}
+                        {gateway.gateway === "COINBASE" && "Set COINBASE_COMMERCE_API_KEY environment variable."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {(!gateways || gateways.length === 0) && (
+              <div className="text-center py-8 text-muted-foreground">
+                No payment gateways configured
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
 
@@ -2921,6 +3112,10 @@ export default function AdminPage() {
               <Activity className="h-4 w-4" />
               OAuth Logs
             </TabsTrigger>
+            <TabsTrigger value="payment-gateways" className="gap-2" data-testid="tab-payment-gateways">
+              <CreditCard className="h-4 w-4" />
+              Payments
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="users">
@@ -2941,6 +3136,10 @@ export default function AdminPage() {
 
           <TabsContent value="oauth-logs">
             <OAuthAuditLogsTab />
+          </TabsContent>
+
+          <TabsContent value="payment-gateways">
+            <PaymentGatewaysTab />
           </TabsContent>
         </Tabs>
       </div>
