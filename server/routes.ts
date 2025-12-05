@@ -59,10 +59,17 @@ function generateTraceId(): string {
   return `oauth_${Date.now()}_${randomBytes(8).toString("hex")}`;
 }
 
+type OAuthStage = "AUTHORIZATION" | "TOKEN_EXCHANGE" | "TOKEN_REFRESH" | "API_CALL" | "WEBHOOK_DELIVERY" | "CLIENT_REGISTRATION";
+type ErrorClass = "CLIENT" | "SERVER" | "NETWORK" | "VALIDATION" | "RATE_LIMIT" | "AUTHENTICATION" | "AUTHORIZATION";
+
 interface OAuthAuditContext {
   traceId: string;
+  spanId?: string;
+  parentSpanId?: string;
   startTime: number;
+  stage?: OAuthStage;
   clientId?: string;
+  appId?: string;
   appName?: string;
   userId?: string;
   userEmail?: string;
@@ -70,35 +77,85 @@ interface OAuthAuditContext {
   scope?: string;
   ipAddress?: string;
   userAgent?: string;
+  requestMethod?: string;
+  requestPath?: string;
 }
+
+const ERROR_CLASS_MAP: Record<string, ErrorClass> = {
+  invalid_request: "VALIDATION",
+  invalid_client: "AUTHENTICATION",
+  invalid_grant: "CLIENT",
+  invalid_redirect_uri: "VALIDATION",
+  invalid_scope: "VALIDATION",
+  unsupported_response_type: "VALIDATION",
+  unsupported_grant_type: "VALIDATION",
+  access_denied: "AUTHORIZATION",
+  server_error: "SERVER",
+  temporarily_unavailable: "SERVER",
+  rate_limit_exceeded: "RATE_LIMIT",
+  insufficient_balance: "CLIENT",
+};
+
+const TROUBLESHOOTING_HINTS: Record<string, string> = {
+  invalid_request: "Check that all required parameters are provided and correctly formatted.",
+  invalid_client: "Verify the client_id is correct and the app is still active.",
+  invalid_grant: "Authorization codes expire after 10 minutes and can only be used once. Ensure the code_verifier matches the original code_challenge.",
+  invalid_redirect_uri: "The redirect_uri must exactly match one registered in your app settings (including trailing slashes and protocol).",
+  invalid_scope: "Review available scopes in the API documentation. Only request scopes your app is permitted to use.",
+  unsupported_response_type: "Only response_type=code is supported for OAuth authorization.",
+  unsupported_grant_type: "Only grant_type=authorization_code is supported for token exchange.",
+  access_denied: "User denied authorization or lacks required permissions.",
+  server_error: "An internal error occurred. Check the trace_id for debugging.",
+  rate_limit_exceeded: "Too many requests. Implement exponential backoff and check the Retry-After header.",
+  insufficient_balance: "User's wallet does not have sufficient credits. Prompt user to add funds.",
+};
 
 async function logOAuthEvent(
   ctx: OAuthAuditContext,
   event: string,
-  status: "SUCCESS" | "FAILURE" | "INFO",
+  status: "SUCCESS" | "FAILURE" | "INFO" | "WARNING",
   errorCode?: string,
   errorMessage?: string,
   details?: Record<string, unknown>
 ): Promise<void> {
   try {
     const durationMs = Date.now() - ctx.startTime;
+    const errorClass = errorCode ? ERROR_CLASS_MAP[errorCode] || "SERVER" : undefined;
+    const troubleshootingHint = errorCode ? TROUBLESHOOTING_HINTS[errorCode] : undefined;
+    
     await storage.createOauthAuditLog({
       traceId: ctx.traceId,
+      spanId: ctx.spanId || null,
+      parentSpanId: ctx.parentSpanId || null,
+      stage: ctx.stage || null,
       event,
       clientId: ctx.clientId || null,
+      appId: ctx.appId || null,
       appName: ctx.appName || null,
       userId: ctx.userId || null,
       userEmail: ctx.userEmail || null,
       redirectUri: ctx.redirectUri || null,
       scope: ctx.scope || null,
       status,
+      errorClass: errorClass || null,
       errorCode: errorCode || null,
       errorMessage: errorMessage || null,
+      errorDetails: details?.errorDetails as string || null,
       details: details ? JSON.stringify(details) : null,
+      requestMethod: ctx.requestMethod || null,
+      requestPath: ctx.requestPath || null,
       ipAddress: ctx.ipAddress || null,
       userAgent: ctx.userAgent || null,
       durationMs,
+      troubleshootingHint: troubleshootingHint || null,
     });
+    
+    if (ctx.appId && status === "FAILURE") {
+      await storage.incrementHealthMetricCounter(ctx.appId, "oauthFailure").catch(() => {});
+    } else if (ctx.appId && status === "SUCCESS" && event.includes("SUCCESS")) {
+      await storage.incrementHealthMetricCounter(ctx.appId, "oauthSuccess").catch(() => {});
+    }
+    
     console.log(`[OAuth Audit] ${ctx.traceId} | ${event} | ${status}${errorCode ? ` | ${errorCode}` : ''}`);
   } catch (error) {
     console.error('[OAuth Audit] Failed to log event:', error);
@@ -1835,11 +1892,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/oauth/authorize", authMiddleware, async (req: AuthRequest, res) => {
     const traceId = generateTraceId();
+    const spanId = randomBytes(8).toString("hex");
     const ctx: OAuthAuditContext = {
       traceId,
+      spanId,
       startTime: Date.now(),
+      stage: "AUTHORIZATION",
       ipAddress: req.ip || req.socket.remoteAddress || undefined,
       userAgent: req.headers['user-agent'] || undefined,
+      requestMethod: "GET",
+      requestPath: "/api/oauth/authorize",
     };
 
     try {
@@ -1890,6 +1952,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
       }
 
+      ctx.appId = appRecord.id;
       ctx.appName = appRecord.name;
       await logOAuthEvent(ctx, "APP_RESOLVED", "INFO", undefined, undefined, { appId: appRecord.id, appName: appRecord.name });
 
@@ -2009,11 +2072,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/oauth/token", async (req, res) => {
     const traceId = generateTraceId();
+    const spanId = randomBytes(8).toString("hex");
     const ctx: OAuthAuditContext = {
       traceId,
+      spanId,
       startTime: Date.now(),
+      stage: "TOKEN_EXCHANGE",
       ipAddress: req.ip || req.socket.remoteAddress || undefined,
       userAgent: req.headers['user-agent'] || undefined,
+      requestMethod: "POST",
+      requestPath: "/api/oauth/token",
     };
 
     try {
@@ -2045,6 +2113,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(401).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
       }
 
+      ctx.appId = appRecord.id;
       ctx.appName = appRecord.name;
       await logOAuthEvent(ctx, "CLIENT_VALIDATED", "INFO", undefined, undefined, { appName: appRecord.name });
 
@@ -2697,6 +2766,412 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("Get user audit logs error:", error);
       res.status(500).json({ message: "Failed to get audit logs" });
+    }
+  });
+
+  app.get("/api/diagnostics/trace/:traceId", async (req, res) => {
+    try {
+      const { traceId } = req.params;
+      
+      if (!traceId) {
+        return res.status(400).json({ 
+          error: "missing_trace_id", 
+          message: "trace_id is required" 
+        });
+      }
+
+      const logs = await storage.getOauthAuditLogsByTraceId(traceId);
+      
+      if (logs.length === 0) {
+        return res.status(404).json({ 
+          error: "trace_not_found", 
+          message: "No logs found for this trace_id. The trace may have expired or the ID is incorrect.",
+          hint: "Trace IDs are returned in OAuth error responses. Check that you're using the correct trace_id."
+        });
+      }
+
+      const timeline = logs.map(log => ({
+        timestamp: log.createdAt,
+        event: log.event,
+        stage: log.stage,
+        status: log.status,
+        duration_ms: log.durationMs,
+        error: log.errorCode ? {
+          code: log.errorCode,
+          message: log.errorMessage,
+          class: log.errorClass,
+          hint: log.troubleshootingHint,
+        } : undefined,
+        details: log.details ? JSON.parse(log.details) : undefined,
+      }));
+
+      const summary = {
+        trace_id: traceId,
+        total_events: logs.length,
+        first_event: logs[0]?.createdAt,
+        last_event: logs[logs.length - 1]?.createdAt,
+        total_duration_ms: logs[logs.length - 1]?.durationMs,
+        client_id: logs[0]?.clientId,
+        app_name: logs[0]?.appName,
+        user_email: logs[0]?.userEmail,
+        final_status: logs[logs.length - 1]?.status,
+        errors: logs.filter(l => l.status === "FAILURE").map(l => ({
+          event: l.event,
+          code: l.errorCode,
+          message: l.errorMessage,
+          hint: l.troubleshootingHint,
+        })),
+      };
+
+      res.json({ summary, timeline });
+    } catch (error) {
+      console.error("Diagnostics trace error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to retrieve trace" });
+    }
+  });
+
+  app.get("/api/diagnostics/app/:appId", async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return res.status(401).json({ 
+          error: "missing_api_key", 
+          message: "App API key required in Authorization header" 
+        });
+      }
+
+      const key = authHeader.slice(7);
+      const keyHash = hashToken(key);
+      const appApiKey = await storage.getAppApiKeyByHash(keyHash);
+
+      if (!appApiKey) {
+        return res.status(401).json({ error: "invalid_api_key", message: "Invalid or revoked API key" });
+      }
+
+      const { appId } = req.params;
+
+      if (appApiKey.appId !== appId) {
+        return res.status(403).json({ 
+          error: "access_denied", 
+          message: "API key does not have access to this app's diagnostics" 
+        });
+      }
+
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      const [recentLogs, recentErrors, healthMetrics, webhookFailures] = await Promise.all([
+        storage.getOauthAuditLogsByAppId(appId, limit),
+        storage.getRecentOauthErrors(appId, 20),
+        storage.getIntegrationHealthMetrics(appId),
+        storage.getRecentWebhookFailures(appId, 20),
+      ]);
+
+      const errorSummary: Record<string, { count: number; last_seen: Date | null; hint?: string }> = {};
+      recentErrors.forEach(log => {
+        if (log.errorCode) {
+          if (!errorSummary[log.errorCode]) {
+            errorSummary[log.errorCode] = { 
+              count: 0, 
+              last_seen: null,
+              hint: log.troubleshootingHint || undefined,
+            };
+          }
+          errorSummary[log.errorCode].count++;
+          if (!errorSummary[log.errorCode].last_seen || 
+              (log.createdAt && log.createdAt > errorSummary[log.errorCode].last_seen!)) {
+            errorSummary[log.errorCode].last_seen = log.createdAt;
+          }
+        }
+      });
+
+      const webhookSummary = webhookFailures.map(d => ({
+        id: d.id,
+        endpoint: d.endpointUrl,
+        status: d.status,
+        response_status: d.responseStatus,
+        error: d.errorMessage,
+        hint: d.troubleshootingHint,
+        created_at: d.createdAt,
+      }));
+
+      res.json({
+        app_id: appId,
+        health: healthMetrics ? {
+          score: healthMetrics.healthScore,
+          quarantined: healthMetrics.quarantined,
+          quarantine_reason: healthMetrics.quarantineReason,
+          last_success: healthMetrics.lastSuccessAt,
+          last_failure: healthMetrics.lastFailureAt,
+          oauth_success_count: healthMetrics.oauthSuccessCount,
+          oauth_failure_count: healthMetrics.oauthFailureCount,
+          api_call_success_count: healthMetrics.apiCallSuccessCount,
+          api_call_failure_count: healthMetrics.apiCallFailureCount,
+          webhook_success_count: healthMetrics.webhookSuccessCount,
+          webhook_failure_count: healthMetrics.webhookFailureCount,
+        } : null,
+        error_summary: errorSummary,
+        recent_webhook_failures: webhookSummary,
+        recent_activity: recentLogs.slice(0, 20).map(log => ({
+          timestamp: log.createdAt,
+          event: log.event,
+          stage: log.stage,
+          status: log.status,
+          trace_id: log.traceId,
+          error_code: log.errorCode,
+        })),
+      });
+    } catch (error) {
+      console.error("Diagnostics app error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to retrieve app diagnostics" });
+    }
+  });
+
+  app.get("/api/diagnostics/validate-redirect-uri", async (req, res) => {
+    try {
+      const { client_id, redirect_uri } = req.query as { client_id?: string; redirect_uri?: string };
+
+      if (!client_id || !redirect_uri) {
+        return res.status(400).json({ 
+          error: "missing_parameters", 
+          message: "Both client_id and redirect_uri are required" 
+        });
+      }
+
+      const appRecord = await storage.getAppByClientId(client_id);
+      if (!appRecord) {
+        return res.json({ 
+          valid: false,
+          error: "invalid_client",
+          message: "Unknown client_id",
+          hint: "Verify the client_id is correct and the app is still active."
+        });
+      }
+
+      const normalizeUrl = (url: string): string => {
+        try {
+          const parsed = new URL(url);
+          parsed.hostname = parsed.hostname.toLowerCase();
+          if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+            parsed.pathname = parsed.pathname.slice(0, -1);
+          }
+          return parsed.toString();
+        } catch {
+          return url.toLowerCase().replace(/\/$/, '');
+        }
+      };
+
+      const normalizedRedirectUri = normalizeUrl(redirect_uri);
+      const allAllowedUrls = [
+        appRecord.callbackUrl,
+        ...(appRecord.allowedCallbackUrls || [])
+      ].filter((url, index, self) => url && self.indexOf(url) === index);
+      
+      const matchResults = allAllowedUrls.map(allowedUrl => {
+        const normalizedAllowed = normalizeUrl(allowedUrl);
+        return {
+          registered_uri: allowedUrl,
+          normalized: normalizedAllowed,
+          matches: normalizedRedirectUri === normalizedAllowed,
+        };
+      });
+
+      const isValid = matchResults.some(r => r.matches);
+
+      if (!isValid) {
+        const possibleIssues: string[] = [];
+        
+        const hasHttpMismatch = allAllowedUrls.some(url => {
+          const proto = new URL(url).protocol;
+          try {
+            const reqProto = new URL(redirect_uri).protocol;
+            return proto !== reqProto;
+          } catch { return false; }
+        });
+        if (hasHttpMismatch) {
+          possibleIssues.push("HTTP/HTTPS protocol mismatch detected");
+        }
+
+        const hasTrailingSlashIssue = allAllowedUrls.some(url => {
+          return url.endsWith('/') !== redirect_uri.endsWith('/');
+        });
+        if (hasTrailingSlashIssue) {
+          possibleIssues.push("Trailing slash mismatch detected");
+        }
+
+        return res.json({
+          valid: false,
+          error: "invalid_redirect_uri",
+          message: "Redirect URI does not match any registered URIs",
+          submitted_uri: redirect_uri,
+          normalized_submitted: normalizedRedirectUri,
+          registered_uris: matchResults,
+          possible_issues: possibleIssues,
+          hint: "Ensure the redirect_uri exactly matches one of the registered URIs, including protocol (http/https) and trailing slashes."
+        });
+      }
+
+      res.json({
+        valid: true,
+        app_name: appRecord.name,
+        submitted_uri: redirect_uri,
+        matched_uri: matchResults.find(r => r.matches)?.registered_uri,
+      });
+    } catch (error) {
+      console.error("Validate redirect URI error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to validate redirect URI" });
+    }
+  });
+
+  app.get("/api/diagnostics/validate-pkce", (req, res) => {
+    try {
+      const { code_verifier, code_challenge, code_challenge_method } = req.query as {
+        code_verifier?: string;
+        code_challenge?: string;
+        code_challenge_method?: string;
+      };
+
+      if (!code_verifier || !code_challenge) {
+        return res.status(400).json({ 
+          error: "missing_parameters", 
+          message: "Both code_verifier and code_challenge are required" 
+        });
+      }
+
+      if (code_challenge_method && code_challenge_method !== "S256") {
+        return res.json({
+          valid: false,
+          error: "unsupported_method",
+          message: "Only S256 code_challenge_method is supported",
+          hint: "Use SHA-256 hashing for PKCE challenges."
+        });
+      }
+
+      if (code_verifier.length < 43 || code_verifier.length > 128) {
+        return res.json({
+          valid: false,
+          error: "invalid_verifier_length",
+          message: `code_verifier must be 43-128 characters (got ${code_verifier.length})`,
+          hint: "Generate a cryptographically random string between 43 and 128 characters."
+        });
+      }
+
+      const computedChallenge = createHash("sha256")
+        .update(code_verifier)
+        .digest("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+
+      const matches = computedChallenge === code_challenge;
+
+      res.json({
+        valid: matches,
+        submitted_challenge: code_challenge,
+        computed_challenge: computedChallenge,
+        verifier_length: code_verifier.length,
+        matches,
+        hint: matches 
+          ? "PKCE verification will succeed with these values."
+          : "The code_challenge does not match the SHA-256 hash of the code_verifier. Verify your base64url encoding (no padding, use - and _ instead of + and /)."
+      });
+    } catch (error) {
+      console.error("Validate PKCE error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to validate PKCE" });
+    }
+  });
+
+  app.get("/api/admin/integration-health", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const apps = await storage.getAllApps();
+      
+      const healthData = await Promise.all(apps.map(async (app) => {
+        const metrics = await storage.getIntegrationHealthMetrics(app.id);
+        const recentErrors = await storage.getRecentOauthErrors(app.id, 5);
+        
+        return {
+          app_id: app.id,
+          app_name: app.name,
+          client_id: app.clientId,
+          is_active: app.isActive,
+          health: metrics ? {
+            score: metrics.healthScore,
+            quarantined: metrics.quarantined,
+            quarantine_reason: metrics.quarantineReason,
+            quarantined_at: metrics.quarantinedAt,
+            last_success: metrics.lastSuccessAt,
+            last_failure: metrics.lastFailureAt,
+            oauth_success_rate: metrics.oauthSuccessCount + metrics.oauthFailureCount > 0 
+              ? Math.round((metrics.oauthSuccessCount / (metrics.oauthSuccessCount + metrics.oauthFailureCount)) * 100)
+              : null,
+            api_call_success_rate: metrics.apiCallSuccessCount + metrics.apiCallFailureCount > 0 
+              ? Math.round((metrics.apiCallSuccessCount / (metrics.apiCallSuccessCount + metrics.apiCallFailureCount)) * 100)
+              : null,
+            webhook_success_rate: metrics.webhookSuccessCount + metrics.webhookFailureCount > 0 
+              ? Math.round((metrics.webhookSuccessCount / (metrics.webhookSuccessCount + metrics.webhookFailureCount)) * 100)
+              : null,
+          } : null,
+          recent_errors: recentErrors.map(e => ({
+            timestamp: e.createdAt,
+            event: e.event,
+            error_code: e.errorCode,
+            error_class: e.errorClass,
+            trace_id: e.traceId,
+          })),
+        };
+      }));
+
+      const quarantinedApps = healthData.filter(h => h.health?.quarantined);
+      const lowHealthApps = healthData.filter(h => h.health && h.health.score !== null && h.health.score < 50 && !h.health.quarantined);
+
+      res.json({
+        summary: {
+          total_apps: apps.length,
+          active_apps: apps.filter(a => a.isActive).length,
+          quarantined_count: quarantinedApps.length,
+          low_health_count: lowHealthApps.length,
+        },
+        quarantined_apps: quarantinedApps,
+        low_health_apps: lowHealthApps,
+        all_apps: healthData,
+      });
+    } catch (error) {
+      console.error("Admin integration health error:", error);
+      res.status(500).json({ message: "Failed to get integration health" });
+    }
+  });
+
+  app.post("/api/admin/integration-health/:appId/unquarantine", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { appId } = req.params;
+      
+      const metrics = await storage.getIntegrationHealthMetrics(appId);
+      if (!metrics) {
+        return res.status(404).json({ error: "not_found", message: "No health metrics found for this app" });
+      }
+
+      if (!metrics.quarantined) {
+        return res.status(400).json({ error: "not_quarantined", message: "This app is not currently quarantined" });
+      }
+
+      await storage.updateIntegrationHealthMetrics(appId, {
+        quarantined: false,
+        quarantinedAt: null,
+        quarantineReason: null,
+        healthScore: 50,
+        oauthSuccessCount: 0,
+        oauthFailureCount: 0,
+        apiCallSuccessCount: 0,
+        apiCallFailureCount: 0,
+        webhookSuccessCount: 0,
+        webhookFailureCount: 0,
+      });
+
+      await createAuditLog(req, "APP_UNQUARANTINE", `App ${appId} unquarantined by admin`, req.user!.id, "app", appId, {});
+
+      res.json({ success: true, message: "App has been unquarantined and health metrics reset" });
+    } catch (error) {
+      console.error("Admin unquarantine error:", error);
+      res.status(500).json({ message: "Failed to unquarantine app" });
     }
   });
 
