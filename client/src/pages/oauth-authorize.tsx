@@ -597,7 +597,13 @@ export default function OAuthAuthorizePage() {
         <LoginStep
           oauthParams={oauthParams}
           appInfo={appInfo || null}
-          onSuccess={() => setStep("consent")}
+          onSuccess={() => {
+            // Don't set step directly - let the useEffect handle it
+            // based on whether user is already authorized
+            // The useEffect will check isAlreadyAuthorized and either:
+            // - Auto-authorize and redirect (if already authorized)
+            // - Show consent screen (if not yet authorized)
+          }}
         />
       )}
 
