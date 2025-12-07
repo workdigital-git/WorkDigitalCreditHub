@@ -364,6 +364,15 @@ export default function AuthPage() {
                       {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                       Sign in
                     </Button>
+                    <div className="text-center">
+                      <a
+                        href="/forgot-password"
+                        className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                        data-testid="link-forgot-password"
+                      >
+                        Forgot your password?
+                      </a>
+                    </div>
                   </form>
                 </TabsContent>
 

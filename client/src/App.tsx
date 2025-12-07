@@ -15,6 +15,8 @@ import SettingsPage from "@/pages/settings";
 import AdminPage from "@/pages/admin";
 import ApiDocsPage from "@/pages/api-docs";
 import OAuthAuthorizePage from "@/pages/oauth-authorize";
+import ForgotPasswordPage from "@/pages/forgot-password";
+import ResetPasswordPage from "@/pages/reset-password";
 import { Loader2 } from "lucide-react";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
@@ -61,6 +63,12 @@ function Router() {
       </Route>
       <Route path="/auth">
         <PublicRoute component={AuthPage} />
+      </Route>
+      <Route path="/forgot-password">
+        <PublicRoute component={ForgotPasswordPage} />
+      </Route>
+      <Route path="/reset-password">
+        <PublicRoute component={ResetPasswordPage} />
       </Route>
       <Route path="/dashboard">
         <ProtectedRoute component={DashboardPage} />
