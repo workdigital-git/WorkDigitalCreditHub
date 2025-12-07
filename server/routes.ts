@@ -1829,6 +1829,62 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/admin/email/status", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { checkEmailConfiguration } = await import("./email-service");
+      const status = checkEmailConfiguration();
+      res.json(status);
+    } catch (error) {
+      console.error("Email status error:", error);
+      res.status(500).json({ message: "Failed to get email status" });
+    }
+  });
+
+  app.post("/api/admin/email/test", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { to, subject, message } = req.body;
+      
+      if (!to || typeof to !== "string") {
+        return res.status(400).json({ message: "Recipient email is required" });
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(to)) {
+        return res.status(400).json({ message: "Invalid email address format" });
+      }
+
+      const { sendTestEmail } = await import("./email-service");
+      const result = await sendTestEmail(to, subject, message);
+
+      await createAuditLog(
+        req,
+        "ADMIN_EMAIL_TEST",
+        `Admin sent test email to: ${to}`,
+        req.user!.id,
+        "system",
+        null,
+        { to, subject: subject || "Work Digital - Email Test", success: result.success }
+      );
+
+      if (result.success) {
+        res.json({ 
+          success: true, 
+          messageId: result.messageId,
+          message: `Test email sent successfully to ${to}` 
+        });
+      } else {
+        res.status(400).json({ 
+          success: false, 
+          error: result.error,
+          message: `Failed to send email: ${result.error}` 
+        });
+      }
+    } catch (error) {
+      console.error("Email test error:", error);
+      res.status(500).json({ message: "Failed to send test email" });
+    }
+  });
+
   app.get("/api/admin/apps", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const apps = await storage.getAllApps();

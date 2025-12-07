@@ -65,6 +65,10 @@ import {
   CreditCard,
   HeartPulse,
   RefreshCw,
+  Mail,
+  Send,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
@@ -3548,6 +3552,252 @@ function IntegrationHealthTab() {
   );
 }
 
+interface EmailStatus {
+  configured: boolean;
+  domain: string;
+  fromEmail: string;
+}
+
+function EmailTestTab() {
+  const { toast } = useToast();
+  const [to, setTo] = useState("");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [lastResult, setLastResult] = useState<{ success: boolean; messageId?: string; error?: string } | null>(null);
+
+  const { data: emailStatus, isLoading: statusLoading, refetch: refetchStatus } = useQuery<EmailStatus>({
+    queryKey: ["/api/admin/email/status"],
+  });
+
+  const sendTestMutation = useMutation({
+    mutationFn: async (data: { to: string; subject?: string; message?: string }) => {
+      const response = await apiRequest("POST", "/api/admin/email/test", data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setLastResult({ success: true, messageId: data.messageId });
+      toast({
+        title: "Email Sent",
+        description: `Test email sent successfully to ${to}`,
+      });
+    },
+    onError: (error: Error) => {
+      setLastResult({ success: false, error: error.message });
+      toast({
+        title: "Failed to Send",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSend = () => {
+    if (!to.trim()) {
+      toast({
+        title: "Missing Recipient",
+        description: "Please enter a recipient email address",
+        variant: "destructive",
+      });
+      return;
+    }
+    setLastResult(null);
+    sendTestMutation.mutate({
+      to: to.trim(),
+      subject: subject.trim() || undefined,
+      message: message.trim() || undefined,
+    });
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Mail className="h-5 w-5" />
+                Email Configuration
+              </CardTitle>
+              <CardDescription>
+                Email service status and configuration
+              </CardDescription>
+            </div>
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => refetchStatus()}
+              data-testid="button-refresh-email-status"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {statusLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-5 w-48" />
+              <Skeleton className="h-5 w-64" />
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-muted-foreground">Status:</span>
+                {emailStatus?.configured ? (
+                  <Badge className="bg-green-500/10 text-green-600 border-green-200">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    Configured
+                  </Badge>
+                ) : (
+                  <Badge variant="destructive">
+                    <XCircle className="h-3 w-3 mr-1" />
+                    Not Configured
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-muted-foreground">Domain:</span>
+                <code className="text-sm bg-muted px-2 py-1 rounded" data-testid="text-email-domain">
+                  {emailStatus?.domain || "—"}
+                </code>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-muted-foreground">From Address:</span>
+                <code className="text-sm bg-muted px-2 py-1 rounded" data-testid="text-from-email">
+                  {emailStatus?.fromEmail || "—"}
+                </code>
+              </div>
+              {!emailStatus?.configured && (
+                <div className="mt-4 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-amber-800 dark:text-amber-200">
+                        RESEND_API_KEY not configured
+                      </p>
+                      <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                        Add the RESEND_API_KEY secret in the Secrets tab to enable email sending.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Send className="h-5 w-5" />
+            Send Test Email
+          </CardTitle>
+          <CardDescription>
+            Send a test email to verify the email service is working correctly
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="test-email-to">Recipient Email *</Label>
+              <Input
+                id="test-email-to"
+                type="email"
+                placeholder="recipient@example.com"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                data-testid="input-test-email-to"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="test-email-subject">Subject (optional)</Label>
+              <Input
+                id="test-email-subject"
+                type="text"
+                placeholder="Work Digital - Email Test"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                data-testid="input-test-email-subject"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="test-email-message">Message (optional)</Label>
+              <Textarea
+                id="test-email-message"
+                placeholder="This is a test email from Work Digital Client Credit Portal."
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={4}
+                data-testid="input-test-email-message"
+              />
+            </div>
+            <Button
+              onClick={handleSend}
+              disabled={sendTestMutation.isPending || !emailStatus?.configured}
+              className="w-full sm:w-auto"
+              data-testid="button-send-test-email"
+            >
+              {sendTestMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Send Test Email
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {lastResult && (
+        <Card className={lastResult.success ? "border-green-200 dark:border-green-800" : "border-red-200 dark:border-red-800"}>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              {lastResult.success ? (
+                <>
+                  <CheckCircle className="h-5 w-5 text-green-500" />
+                  Email Sent Successfully
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-5 w-5 text-red-500" />
+                  Failed to Send Email
+                </>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {lastResult.success ? (
+              <div className="space-y-2">
+                <p className="text-muted-foreground">The test email was sent successfully.</p>
+                {lastResult.messageId && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Message ID:</span>
+                    <code className="text-sm bg-muted px-2 py-1 rounded" data-testid="text-message-id">
+                      {lastResult.messageId}
+                    </code>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-red-600 dark:text-red-400">{lastResult.error}</p>
+                <p className="text-sm text-muted-foreground">
+                  Check that the RESEND_API_KEY is correctly configured and the domain is verified.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
 
@@ -3604,6 +3854,10 @@ export default function AdminPage() {
               <HeartPulse className="h-4 w-4" />
               Health
             </TabsTrigger>
+            <TabsTrigger value="email" className="gap-2" data-testid="tab-email">
+              <Mail className="h-4 w-4" />
+              Email
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="users">
@@ -3632,6 +3886,10 @@ export default function AdminPage() {
 
           <TabsContent value="integration-health">
             <IntegrationHealthTab />
+          </TabsContent>
+
+          <TabsContent value="email">
+            <EmailTestTab />
           </TabsContent>
         </Tabs>
       </div>
