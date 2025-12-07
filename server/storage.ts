@@ -14,6 +14,7 @@ import {
   webhookDeliveries,
   integrationHealthMetrics,
   smsOtpCodes,
+  passwordResetTokens,
   oauthAuthorizationCodes,
   oauthAccessTokens,
   oauthAuditLogs,
@@ -47,6 +48,8 @@ import {
   type InsertIntegrationHealthMetrics,
   type SmsOtpCode,
   type InsertSmsOtpCode,
+  type PasswordResetToken,
+  type InsertPasswordResetToken,
   type OauthAuthorizationCode,
   type InsertOauthAuthorizationCode,
   type OauthAccessToken,
@@ -148,6 +151,11 @@ export interface IStorage {
   getRecentSmsOtp(phone: string, withinMinutes: number): Promise<SmsOtpCode | undefined>;
   incrementSmsOtpAttempts(id: string): Promise<void>;
   markSmsOtpUsed(id: string): Promise<void>;
+
+  createPasswordResetToken(token: Omit<PasswordResetToken, "id" | "createdAt" | "usedAt">): Promise<PasswordResetToken>;
+  getPasswordResetTokenByHash(tokenHash: string): Promise<PasswordResetToken | undefined>;
+  markPasswordResetTokenUsed(id: string): Promise<void>;
+  deleteExpiredPasswordResetTokens(): Promise<void>;
 
   createOauthAuthorizationCode(code: Omit<OauthAuthorizationCode, "id" | "createdAt" | "usedAt">): Promise<OauthAuthorizationCode>;
   getOauthAuthorizationCode(code: string): Promise<OauthAuthorizationCode | undefined>;
@@ -720,6 +728,32 @@ export class DatabaseStorage implements IStorage {
       .update(smsOtpCodes)
       .set({ usedAt: new Date() })
       .where(eq(smsOtpCodes.id, id));
+  }
+
+  async createPasswordResetToken(token: Omit<PasswordResetToken, "id" | "createdAt" | "usedAt">): Promise<PasswordResetToken> {
+    const [created] = await db.insert(passwordResetTokens).values(token).returning();
+    return created;
+  }
+
+  async getPasswordResetTokenByHash(tokenHash: string): Promise<PasswordResetToken | undefined> {
+    const [token] = await db
+      .select()
+      .from(passwordResetTokens)
+      .where(eq(passwordResetTokens.tokenHash, tokenHash));
+    return token || undefined;
+  }
+
+  async markPasswordResetTokenUsed(id: string): Promise<void> {
+    await db
+      .update(passwordResetTokens)
+      .set({ usedAt: new Date() })
+      .where(eq(passwordResetTokens.id, id));
+  }
+
+  async deleteExpiredPasswordResetTokens(): Promise<void> {
+    await db
+      .delete(passwordResetTokens)
+      .where(sql`${passwordResetTokens.expiresAt} < NOW()`);
   }
 
   async createOauthAuthorizationCode(code: Omit<OauthAuthorizationCode, "id" | "createdAt" | "usedAt">): Promise<OauthAuthorizationCode> {
