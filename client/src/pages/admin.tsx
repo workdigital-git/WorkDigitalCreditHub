@@ -104,18 +104,31 @@ function formatCurrency(cents: number): string {
   }).format(cents / 100);
 }
 
-function StatsCards({ stats, isLoading }: { stats?: AdminStats; isLoading: boolean }) {
+function StatsCards({ 
+  stats, 
+  isLoading, 
+  onNavigate 
+}: { 
+  stats?: AdminStats; 
+  isLoading: boolean;
+  onNavigate: (tab: string) => void;
+}) {
   const items = [
-    { label: "Total Users", value: stats?.totalUsers ?? 0, icon: Users },
-    { label: "Registered Apps", value: stats?.totalApps ?? 0, icon: AppWindow },
-    { label: "Total Balance", value: formatCurrency(stats?.totalBalance ?? 0), icon: Activity },
-    { label: "Transactions", value: stats?.totalTransactions ?? 0, icon: Activity },
+    { label: "Total Users", value: stats?.totalUsers ?? 0, icon: Users, tab: "users" },
+    { label: "Registered Apps", value: stats?.totalApps ?? 0, icon: AppWindow, tab: "apps" },
+    { label: "Total Balance", value: formatCurrency(stats?.totalBalance ?? 0), icon: DollarSign, tab: "payment-gateways" },
+    { label: "Transactions", value: stats?.totalTransactions ?? 0, icon: Activity, tab: "users" },
   ];
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {items.map((item) => (
-        <Card key={item.label}>
+        <Card 
+          key={item.label} 
+          className="cursor-pointer transition-colors hover-elevate"
+          onClick={() => onNavigate(item.tab)}
+          data-testid={`stat-card-${item.tab}`}
+        >
           <CardContent className="p-6">
             <div className="flex items-center gap-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
@@ -3800,6 +3813,7 @@ function EmailTestTab() {
 
 export default function AdminPage() {
   const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState("users");
 
   const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
     queryKey: ["/api/admin/stats"],
@@ -3822,9 +3836,9 @@ export default function AdminPage() {
           </p>
         </div>
 
-        <StatsCards stats={stats} isLoading={statsLoading} />
+        <StatsCards stats={stats} isLoading={statsLoading} onNavigate={setActiveTab} />
 
-        <Tabs defaultValue="users" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="flex-wrap">
             <TabsTrigger value="users" className="gap-2" data-testid="tab-users">
               <Users className="h-4 w-4" />
