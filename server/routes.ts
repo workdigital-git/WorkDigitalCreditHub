@@ -1737,6 +1737,80 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.patch("/api/admin/users/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+      const { fullName, email, phone, isAdmin } = req.body;
+
+      const existingUser = await storage.getUser(id);
+      if (!existingUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const updateData: Partial<typeof existingUser> = {};
+
+      if (fullName !== undefined) {
+        updateData.fullName = fullName || null;
+      }
+
+      if (email !== undefined) {
+        if (typeof email !== "string" || !email.includes("@")) {
+          return res.status(400).json({ message: "Invalid email address" });
+        }
+        const emailUser = await storage.getUserByEmail(email.toLowerCase().trim());
+        if (emailUser && emailUser.id !== id) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+        updateData.email = email.toLowerCase().trim();
+      }
+
+      if (phone !== undefined) {
+        if (phone === "" || phone === null) {
+          updateData.phone = null;
+          updateData.phoneVerified = false;
+        } else {
+          const normalizedPhone = normalizePhoneNumber(phone);
+          if (!validatePhoneNumber(normalizedPhone)) {
+            return res.status(400).json({ message: "Invalid phone number format. Use format: +12025551234" });
+          }
+          if (existingUser.phone !== normalizedPhone) {
+            updateData.phone = normalizedPhone;
+            updateData.phoneVerified = false;
+          }
+        }
+      }
+
+      if (isAdmin !== undefined) {
+        if (typeof isAdmin !== "boolean") {
+          return res.status(400).json({ message: "isAdmin must be a boolean" });
+        }
+        updateData.isAdmin = isAdmin;
+      }
+
+      const updatedUser = await storage.updateUser(id, updateData);
+      if (!updatedUser) {
+        return res.status(500).json({ message: "Failed to update user" });
+      }
+
+      await createAuditLog(
+        req,
+        "ADMIN_USER_UPDATE",
+        `Admin updated user: ${updatedUser.email}`,
+        req.user!.id,
+        "user",
+        id,
+        { changes: Object.keys(updateData) }
+      );
+
+      const wallet = await storage.getWalletByUserId(id);
+      const safeUser = prepareSafeUserResponse(updatedUser);
+      res.json({ ...safeUser, wallet });
+    } catch (error) {
+      console.error("Admin update user error:", error);
+      res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
   app.get("/api/admin/apps", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const apps = await storage.getAllApps();
