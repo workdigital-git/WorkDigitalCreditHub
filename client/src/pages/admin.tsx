@@ -137,9 +137,16 @@ function UsersTab() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [creditDialogOpen, setCreditDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserWithWallet | null>(null);
   const [creditAmount, setCreditAmount] = useState("");
   const [creditReason, setCreditReason] = useState("");
+  const [editForm, setEditForm] = useState({
+    fullName: "",
+    email: "",
+    phone: "",
+    isAdmin: false,
+  });
 
   const { data: users, isLoading } = useQuery<UserWithWallet[]>({
     queryKey: ["/api/admin/users"],
@@ -175,11 +182,49 @@ function UsersTab() {
     },
   });
 
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("PATCH", `/api/admin/users/${selectedUser?.id}`, {
+        fullName: editForm.fullName || null,
+        email: editForm.email,
+        phone: editForm.phone || null,
+        isAdmin: editForm.isAdmin,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      toast({
+        title: "User updated",
+        description: `Successfully updated ${selectedUser?.email}`,
+      });
+      setEditDialogOpen(false);
+      setSelectedUser(null);
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to update user",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleOpenCreditDialog = (user: UserWithWallet) => {
     setSelectedUser(user);
     setCreditAmount("");
     setCreditReason("");
     setCreditDialogOpen(true);
+  };
+
+  const handleOpenEditDialog = (user: UserWithWallet) => {
+    setSelectedUser(user);
+    setEditForm({
+      fullName: user.fullName || "",
+      email: user.email,
+      phone: user.phone || "",
+      isAdmin: user.isAdmin,
+    });
+    setEditDialogOpen(true);
   };
 
   const filteredUsers = users?.filter(
@@ -221,6 +266,7 @@ function UsersTab() {
               <TableHeader>
                 <TableRow>
                   <TableHead>User</TableHead>
+                  <TableHead>Phone</TableHead>
                   <TableHead>Balance</TableHead>
                   <TableHead>2FA</TableHead>
                   <TableHead>Role</TableHead>
@@ -240,6 +286,9 @@ function UsersTab() {
                           <p className="text-sm text-muted-foreground">{user.fullName}</p>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground" data-testid={`user-phone-${user.id}`}>
+                      {user.phone || "—"}
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {formatCurrency(user.wallet?.balanceCents ?? 0)}
@@ -267,21 +316,32 @@ function UsersTab() {
                       }).format(new Date(user.createdAt))}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleOpenCreditDialog(user)}
-                        data-testid={`button-credit-user-${user.id}`}
-                      >
-                        <DollarSign className="h-4 w-4 mr-1" />
-                        Credit
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenEditDialog(user)}
+                          data-testid={`button-edit-user-${user.id}`}
+                        >
+                          <Edit className="h-4 w-4 mr-1" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenCreditDialog(user)}
+                          data-testid={`button-credit-user-${user.id}`}
+                        >
+                          <DollarSign className="h-4 w-4 mr-1" />
+                          Credit
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
                 {filteredUsers?.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                       No users found
                     </TableCell>
                   </TableRow>
@@ -342,6 +402,72 @@ function UsersTab() {
             >
               {creditMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Credit ${creditAmount || "0.00"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>
+              Update user information for {selectedUser?.email}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-fullName">Full Name</Label>
+              <Input
+                id="edit-fullName"
+                placeholder="John Doe"
+                value={editForm.fullName}
+                onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+                data-testid="input-edit-fullname"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-email">Email</Label>
+              <Input
+                id="edit-email"
+                type="email"
+                placeholder="user@example.com"
+                value={editForm.email}
+                onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                data-testid="input-edit-email"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-phone">Phone Number</Label>
+              <Input
+                id="edit-phone"
+                type="tel"
+                placeholder="+12025551234"
+                value={editForm.phone}
+                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                data-testid="input-edit-phone"
+              />
+              <p className="text-xs text-muted-foreground">
+                Format: +1234567890 (E.164 format)
+              </p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="edit-isAdmin">Admin Access</Label>
+              <Switch
+                id="edit-isAdmin"
+                checked={editForm.isAdmin}
+                onCheckedChange={(checked) => setEditForm({ ...editForm, isAdmin: checked })}
+                data-testid="switch-edit-admin"
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => editMutation.mutate()}
+              disabled={!editForm.email || editMutation.isPending}
+              data-testid="button-confirm-edit"
+            >
+              {editMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save Changes
             </Button>
           </div>
         </DialogContent>
