@@ -718,6 +718,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.post("/api/auth/verify-reset-token", async (req, res) => {
+    try {
+      const { token } = req.body;
+      
+      if (!token || typeof token !== "string") {
+        return res.json({ valid: false });
+      }
+
+      const tokenHash = hashToken(token);
+      const resetToken = await storage.getPasswordResetTokenByHash(tokenHash);
+
+      if (!resetToken) {
+        return res.json({ valid: false });
+      }
+
+      if (resetToken.usedAt) {
+        return res.json({ valid: false });
+      }
+
+      if (new Date() > resetToken.expiresAt) {
+        return res.json({ valid: false });
+      }
+
+      res.json({ valid: true });
+    } catch (error) {
+      console.error("Verify reset token error:", error);
+      res.json({ valid: false });
+    }
+  });
+
   app.post("/api/auth/reset-password", async (req, res) => {
     try {
       const { token, password } = req.body;

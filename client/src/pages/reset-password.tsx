@@ -18,11 +18,37 @@ export default function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(true);
+  const [isTokenValid, setIsTokenValid] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const resetToken = params.get("token");
     setToken(resetToken);
+    
+    if (!resetToken) {
+      setIsValidating(false);
+      setIsTokenValid(false);
+      return;
+    }
+
+    const validateToken = async () => {
+      try {
+        const response = await fetch("/api/auth/verify-reset-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: resetToken }),
+        });
+        const data = await response.json();
+        setIsTokenValid(data.valid === true);
+      } catch {
+        setIsTokenValid(false);
+      } finally {
+        setIsValidating(false);
+      }
+    };
+    
+    validateToken();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -62,7 +88,21 @@ export default function ResetPasswordPage() {
     }
   };
 
-  if (!token) {
+  if (isValidating) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+        <div className="absolute top-4 right-4">
+          <ThemeToggle />
+        </div>
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Verifying reset link...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!token || !isTokenValid) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-background">
         <div className="absolute top-4 right-4">
