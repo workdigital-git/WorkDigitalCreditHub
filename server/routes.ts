@@ -248,6 +248,24 @@ function prepareSafeUserResponse(user: {
   return { ...rest, phone: maskedPhone };
 }
 
+function prepareAdminUserResponse(user: { 
+  id: string; 
+  email: string; 
+  fullName: string | null; 
+  phone: string | null; 
+  phoneVerified: boolean;
+  isAdmin: boolean;
+  twoFactorEnabled: boolean;
+  twoFactorMethod: string | null;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+  passwordHash?: string;
+  twoFactorSecret?: string | null;
+}) {
+  const { passwordHash, twoFactorSecret, ...rest } = user;
+  return rest;
+}
+
 async function checkAndExecuteAutoTopup(userId: string, walletId: string): Promise<{ triggered: boolean; newBalance?: number; transactionId?: string; amountCents?: number }> {
   try {
     const wallet = await storage.getWallet(walletId);
@@ -1726,8 +1744,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const usersWithWallets = await Promise.all(
         users.map(async (user) => {
           const wallet = await storage.getWalletByUserId(user.id);
-          const safeUser = prepareSafeUserResponse(user);
-          return { ...safeUser, wallet };
+          const adminUser = prepareAdminUserResponse(user);
+          return { ...adminUser, wallet };
         })
       );
       res.json(usersWithWallets);
@@ -1803,8 +1821,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       );
 
       const wallet = await storage.getWalletByUserId(id);
-      const safeUser = prepareSafeUserResponse(updatedUser);
-      res.json({ ...safeUser, wallet });
+      const adminUser = prepareAdminUserResponse(updatedUser);
+      res.json({ ...adminUser, wallet });
     } catch (error) {
       console.error("Admin update user error:", error);
       res.status(500).json({ message: "Failed to update user" });
