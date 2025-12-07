@@ -286,6 +286,15 @@ export const smsOtpCodes = pgTable("sms_otp_codes", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const oauthAuthorizationCodes = pgTable("oauth_authorization_codes", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
   code: text("code").notNull().unique(),
@@ -407,6 +416,10 @@ export const smsOtpCodesRelations = relations(smsOtpCodes, ({ one }) => ({
   user: one(users, { fields: [smsOtpCodes.userId], references: [users.id] }),
 }));
 
+export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
+  user: one(users, { fields: [passwordResetTokens.userId], references: [users.id] }),
+}));
+
 export const auditLogsRelations = relations(auditLogs, ({ one }) => ({
   user: one(users, { fields: [auditLogs.userId], references: [users.id] }),
 }));
@@ -525,6 +538,12 @@ export const insertWebhookEventSchema = createInsertSchema(webhookEvents).omit({
 });
 
 export const insertSmsOtpCodeSchema = createInsertSchema(smsOtpCodes).omit({
+  id: true,
+  createdAt: true,
+  usedAt: true,
+});
+
+export const insertPasswordResetTokenSchema = createInsertSchema(passwordResetTokens).omit({
   id: true,
   createdAt: true,
   usedAt: true,
