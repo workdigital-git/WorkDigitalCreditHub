@@ -715,8 +715,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         });
 
         const { sendPasswordResetEmail } = await import("./email-service");
-        const baseUrl = `${req.protocol}://${req.get("host")}`;
-        await sendPasswordResetEmail(user.email, token, baseUrl);
+        const protocol = req.headers["x-forwarded-proto"] || req.protocol || "https";
+        const host = req.headers["x-forwarded-host"] || req.get("host") || process.env.REPLIT_DEV_DOMAIN;
+        const baseUrl = `${protocol}://${host}`;
+        console.log(`Password reset email - Base URL: ${baseUrl}, Email: ${user.email}`);
+        const emailResult = await sendPasswordResetEmail(user.email, token, baseUrl);
+        if (!emailResult.success) {
+          console.error(`Failed to send password reset email: ${emailResult.error}`);
+        }
 
         await createAuditLog(
           req,

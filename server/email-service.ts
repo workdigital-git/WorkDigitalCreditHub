@@ -37,6 +37,10 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
   }
 
   try {
+    console.log(`[Email Service] Sending email to: ${options.to}, subject: ${options.subject}`);
+    console.log(`[Email Service] From: ${FROM_NAME} <${FROM_EMAIL}>`);
+    console.log(`[Email Service] API Key configured: ${!!process.env.RESEND_API_KEY}`);
+    
     const result = await resend.emails.send({
       from: `${FROM_NAME} <${FROM_EMAIL}>`,
       to: options.to,
@@ -45,21 +49,23 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
       html: options.html,
     });
 
+    console.log(`[Email Service] Resend API response:`, JSON.stringify(result, null, 2));
+
     if (result.error) {
-      console.error("Resend API error:", result.error);
+      console.error("[Email Service] Resend API error:", result.error);
       return {
         success: false,
         error: result.error.message,
       };
     }
 
-    console.log(`Email sent successfully to ${options.to}, ID: ${result.data?.id}`);
+    console.log(`[Email Service] Email sent successfully to ${options.to}, ID: ${result.data?.id}`);
     return {
       success: true,
       messageId: result.data?.id,
     };
   } catch (error) {
-    console.error("Email send error:", error);
+    console.error("[Email Service] Email send exception:", error);
     return {
       success: false,
       error: error instanceof Error ? error.message : "Unknown error",
