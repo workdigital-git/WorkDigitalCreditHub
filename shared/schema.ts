@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, timestamp, bigint, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, timestamp, bigint, pgEnum, jsonb, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -139,6 +139,34 @@ export const integrationHealthMetrics = pgTable("integration_health_metrics", {
 });
 
 export const twoFactorMethodEnum = pgEnum("two_factor_method", ["TOTP", "SMS"]);
+
+export const oauthProviderEnum = pgEnum("oauth_provider", ["REPLIT", "GOOGLE"]);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    sid: varchar("sid").primaryKey(),
+    sess: jsonb("sess").notNull(),
+    expire: timestamp("expire").notNull(),
+  },
+  (table) => [index("IDX_session_expire").on(table.expire)],
+);
+
+export const oauthIdentities = pgTable("oauth_identities", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: oauthProviderEnum("provider").notNull(),
+  providerUserId: text("provider_user_id").notNull(),
+  email: text("email"),
+  profileImageUrl: text("profile_image_url"),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
+  lastLoginAt: timestamp("last_login_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type OAuthIdentity = typeof oauthIdentities.$inferSelect;
+export type InsertOAuthIdentity = typeof oauthIdentities.$inferInsert;
 
 export const users = pgTable("users", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
