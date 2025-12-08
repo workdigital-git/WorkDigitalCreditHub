@@ -19,6 +19,7 @@ import {
   oauthAccessTokens,
   oauthAuditLogs,
   paymentGatewaySettings,
+  oauthIdentities,
   type User,
   type InsertUser,
   type Wallet,
@@ -58,6 +59,8 @@ import {
   type InsertOauthAuditLog,
   type PaymentGatewaySettings,
   type InsertPaymentGatewaySettings,
+  type OAuthIdentity,
+  type InsertOAuthIdentity,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -193,6 +196,11 @@ export interface IStorage {
   upsertPaymentGatewaySettings(settings: InsertPaymentGatewaySettings): Promise<PaymentGatewaySettings>;
   updatePaymentGatewaySettings(gateway: "STRIPE" | "PAYPAL" | "COINBASE", data: Partial<PaymentGatewaySettings>): Promise<PaymentGatewaySettings | undefined>;
   initializePaymentGateways(): Promise<void>;
+
+  getOAuthIdentityByProvider(provider: "REPLIT" | "GOOGLE", providerUserId: string): Promise<OAuthIdentity | undefined>;
+  getOAuthIdentitiesByUserId(userId: string): Promise<OAuthIdentity[]>;
+  createOAuthIdentity(identity: Omit<OAuthIdentity, "id" | "createdAt">): Promise<OAuthIdentity>;
+  updateOAuthIdentityLastLogin(id: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1130,6 +1138,42 @@ export class DatabaseStorage implements IStorage {
         await db.insert(paymentGatewaySettings).values(gateway);
       }
     }
+  }
+
+  async getOAuthIdentityByProvider(provider: "REPLIT" | "GOOGLE", providerUserId: string): Promise<OAuthIdentity | undefined> {
+    const [identity] = await db
+      .select()
+      .from(oauthIdentities)
+      .where(and(
+        eq(oauthIdentities.provider, provider),
+        eq(oauthIdentities.providerUserId, providerUserId)
+      ));
+    return identity || undefined;
+  }
+
+  async getOAuthIdentitiesByUserId(userId: string): Promise<OAuthIdentity[]> {
+    return await db
+      .select()
+      .from(oauthIdentities)
+      .where(eq(oauthIdentities.userId, userId));
+  }
+
+  async createOAuthIdentity(identity: Omit<OAuthIdentity, "id" | "createdAt">): Promise<OAuthIdentity> {
+    const [created] = await db
+      .insert(oauthIdentities)
+      .values({
+        ...identity,
+        id: randomUUID(),
+      })
+      .returning();
+    return created;
+  }
+
+  async updateOAuthIdentityLastLogin(id: string): Promise<void> {
+    await db
+      .update(oauthIdentities)
+      .set({ lastLoginAt: new Date() })
+      .where(eq(oauthIdentities.id, id));
   }
 }
 

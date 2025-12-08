@@ -385,6 +385,9 @@ async function createAuditLog(
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  const { setupReplitAuth } = await import("./replitAuth");
+  await setupReplitAuth(app);
+
   app.post("/api/auth/register", async (req, res) => {
     try {
       const validation = insertUserSchema.safeParse(req.body);
