@@ -2021,6 +2021,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.post("/api/admin/apps/:id/regenerate-secret", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      const existingApp = await storage.getApp(id);
+      if (!existingApp) {
+        return res.status(404).json({ message: "App not found" });
+      }
+
+      const newClientSecret = randomBytes(32).toString("hex");
+
+      const updatedApp = await storage.updateApp(id, { clientSecret: newClientSecret });
+
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        eventType: "ADMIN_ACTION",
+        entityType: "APP",
+        entityId: id,
+        action: "Regenerated client secret",
+        details: JSON.stringify({ appName: existingApp.name }),
+        ipAddress: req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      res.json({ clientSecret: newClientSecret, app: updatedApp });
+    } catch (error) {
+      console.error("Regenerate secret error:", error);
+      res.status(500).json({ message: "Failed to regenerate client secret" });
+    }
+  });
+
   app.get("/api/admin/oauth-audit-logs", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { limit = "100", client_id, trace_id } = req.query as { limit?: string; client_id?: string; trace_id?: string };

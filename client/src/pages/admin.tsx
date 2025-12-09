@@ -517,6 +517,7 @@ function AppsTab() {
     description: "",
     pricingModel: "",
   });
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
 
   const { data: apps, isLoading } = useQuery<App[]>({
     queryKey: ["/api/admin/apps"],
@@ -584,6 +585,30 @@ function AppsTab() {
     onError: (error) => {
       toast({
         title: "Failed to update app",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const regenerateSecretMutation = useMutation({
+    mutationFn: async (): Promise<{ clientSecret: string }> => {
+      if (!editApp) throw new Error("No app selected");
+      const res = await apiRequest("POST", `/api/admin/apps/${editApp.id}/regenerate-secret`, {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/apps"] });
+      toast({ 
+        title: "Client secret regenerated", 
+        description: "Make sure to update the secret in your integrated applications." 
+      });
+      setConfirmRegenerate(false);
+      copyToClipboard(data.clientSecret, "newSecret");
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to regenerate secret",
         description: error instanceof Error ? error.message : "Please try again",
         variant: "destructive",
       });
@@ -928,8 +953,8 @@ function AppsTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editApp} onOpenChange={(open) => !open && setEditApp(null)}>
-        <DialogContent className="sm:max-w-lg">
+      <Dialog open={!!editApp} onOpenChange={(open) => { if (!open) { setEditApp(null); setConfirmRegenerate(false); } }}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit App Settings</DialogTitle>
             <DialogDescription>
@@ -937,6 +962,92 @@ function AppsTab() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            <div className="space-y-4 rounded-lg border p-4 bg-muted/30">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Key className="h-4 w-4" />
+                Client Credentials
+              </div>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Client ID</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={editApp?.clientId || ""}
+                      readOnly
+                      className="font-mono text-sm bg-background"
+                      data-testid="input-edit-client-id"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(editApp?.clientId || "", "editClientId")}
+                      data-testid="button-copy-edit-client-id"
+                    >
+                      {copiedField === "editClientId" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Client Secret</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={editApp?.clientSecret || ""}
+                      readOnly
+                      className="font-mono text-sm bg-background"
+                      data-testid="input-edit-client-secret"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(editApp?.clientSecret || "", "editClientSecret")}
+                      data-testid="button-copy-edit-client-secret"
+                    >
+                      {copiedField === "editClientSecret" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                {!confirmRegenerate ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-amber-600 hover:text-amber-700 border-amber-300"
+                    onClick={() => setConfirmRegenerate(true)}
+                    data-testid="button-regenerate-secret"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Regenerate Client Secret
+                  </Button>
+                ) : (
+                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 space-y-2">
+                    <p className="text-sm text-destructive font-medium">Are you sure?</p>
+                    <p className="text-xs text-muted-foreground">
+                      This will invalidate the current secret. All integrated applications using this secret will need to be updated.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => regenerateSecretMutation.mutate()}
+                        disabled={regenerateSecretMutation.isPending}
+                        data-testid="button-confirm-regenerate"
+                      >
+                        {regenerateSecretMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Yes, Regenerate
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setConfirmRegenerate(false)}
+                        data-testid="button-cancel-regenerate"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="space-y-4 rounded-lg border p-4">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Globe className="h-4 w-4" />
