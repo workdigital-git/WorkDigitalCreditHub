@@ -69,6 +69,8 @@ import {
   Send,
   CheckCircle,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
@@ -2674,36 +2676,43 @@ interface OAuthAuditLog {
   status: string;
   errorCode: string | null;
   errorMessage: string | null;
+  errorDetails: string | null;
   details: string | null;
   ipAddress: string | null;
   userAgent: string | null;
+  requestMethod: string | null;
+  requestPath: string | null;
+  responseStatus: number | null;
   durationMs: number;
   createdAt: string;
 }
+
+const LOGS_PER_PAGE = 25;
 
 function OAuthAuditLogsTab() {
   const [searchQuery, setSearchQuery] = useState("");
   const [traceIdFilter, setTraceIdFilter] = useState("");
   const [clientIdFilter, setClientIdFilter] = useState("");
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const { toast } = useToast();
 
   const buildQueryString = () => {
     const params = new URLSearchParams();
-    params.set("limit", "100");
+    params.set("limit", "500");
     if (clientIdFilter) params.set("client_id", clientIdFilter);
     if (traceIdFilter) params.set("trace_id", traceIdFilter);
     return params.toString();
   };
 
   const queryString = buildQueryString();
-  const { data: logs, isLoading, isError, error } = useQuery<OAuthAuditLog[]>({
+  const { data: logs, isLoading, isError, error, refetch, isFetching } = useQuery<OAuthAuditLog[]>({
     queryKey: ["/api/admin/oauth-audit-logs", { clientIdFilter, traceIdFilter }],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/admin/oauth-audit-logs?${queryString}`);
       return res.json();
     },
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
 
   const { data: traceLogs, isLoading: traceLoading, isError: traceError } = useQuery<OAuthAuditLog[]>({
@@ -2730,7 +2739,11 @@ function OAuthAuditLogsTab() {
     return "text-muted-foreground";
   };
 
-  const filteredLogs = logs?.filter(log => {
+  const sortedLogs = logs?.slice().sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  const filteredLogs = sortedLogs?.filter(log => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
@@ -2740,13 +2753,31 @@ function OAuthAuditLogsTab() {
       log.appName?.toLowerCase().includes(query) ||
       log.userEmail?.toLowerCase().includes(query) ||
       log.errorCode?.toLowerCase().includes(query) ||
-      log.errorMessage?.toLowerCase().includes(query)
+      log.errorMessage?.toLowerCase().includes(query) ||
+      log.redirectUri?.toLowerCase().includes(query)
     );
   });
+
+  const totalPages = Math.ceil((filteredLogs?.length || 0) / LOGS_PER_PAGE);
+  
+  const validCurrentPage = Math.min(currentPage, Math.max(1, totalPages));
+  if (validCurrentPage !== currentPage && totalPages > 0) {
+    setCurrentPage(validCurrentPage);
+  }
+
+  const paginatedLogs = filteredLogs?.slice(
+    (validCurrentPage - 1) * LOGS_PER_PAGE,
+    validCurrentPage * LOGS_PER_PAGE
+  );
 
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleString();
+  };
+
+  const handleRefresh = () => {
+    refetch();
+    toast({ title: "Refreshing logs..." });
   };
 
   const copyToClipboard = (text: string) => {
@@ -2757,13 +2788,27 @@ function OAuthAuditLogsTab() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Activity className="h-5 w-5" />
-          OAuth Audit Logs
-        </CardTitle>
-        <CardDescription>
-          Monitor OAuth authorization and token exchange flows in real-time
-        </CardDescription>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              OAuth Audit Logs
+            </CardTitle>
+            <CardDescription>
+              Monitor OAuth authorization and token exchange flows in real-time
+            </CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isFetching}
+            data-testid="button-refresh-oauth-logs"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-4">
@@ -2773,24 +2818,32 @@ function OAuthAuditLogsTab() {
               placeholder="Search logs..."
               className="pl-10"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
               data-testid="input-oauth-log-search"
             />
           </div>
           <Input
             placeholder="Filter by Trace ID"
             value={traceIdFilter}
-            onChange={(e) => setTraceIdFilter(e.target.value)}
+            onChange={(e) => { setTraceIdFilter(e.target.value); setCurrentPage(1); }}
             className="w-48"
             data-testid="input-trace-id-filter"
           />
           <Input
             placeholder="Filter by Client ID"
             value={clientIdFilter}
-            onChange={(e) => setClientIdFilter(e.target.value)}
+            onChange={(e) => { setClientIdFilter(e.target.value); setCurrentPage(1); }}
             className="w-48"
             data-testid="input-client-id-filter"
           />
+        </div>
+        
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>
+            Showing {paginatedLogs?.length || 0} of {filteredLogs?.length || 0} logs
+            {totalPages > 1 && ` (Page ${validCurrentPage} of ${totalPages})`}
+          </span>
+          {isFetching && <span className="text-primary">Updating...</span>}
         </div>
 
         {isLoading ? (
@@ -2811,116 +2864,172 @@ function OAuthAuditLogsTab() {
             <p>No OAuth audit logs found</p>
           </div>
         ) : (
-          <ScrollArea className="h-[500px]">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Trace ID</TableHead>
-                  <TableHead>Event</TableHead>
-                  <TableHead>App</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Details</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLogs?.map((log) => (
-                  <TableRow key={log.id} className="text-sm">
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {formatTime(log.createdAt)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <code className="text-xs font-mono truncate max-w-[100px]" title={log.traceId}>
-                          {log.traceId.substring(0, 20)}...
-                        </code>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => copyToClipboard(log.traceId)}
-                          data-testid={`button-copy-trace-${log.id}`}
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => setSelectedTraceId(log.traceId)}
-                          data-testid={`button-view-trace-${log.id}`}
-                        >
-                          <Eye className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`font-medium ${getEventColor(log.event)}`}>
-                        {log.event}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      {log.appName ? (
-                        <span className="truncate max-w-[100px]" title={log.appName}>
-                          {log.appName}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {log.userEmail ? (
-                        <span className="truncate max-w-[120px]" title={log.userEmail}>
-                          {log.userEmail}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusColor(log.status)}>
-                        {log.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {log.durationMs}ms
-                    </TableCell>
-                    <TableCell>
-                      {log.errorCode ? (
-                        <span className="text-xs text-red-600" title={log.errorMessage || ""}>
-                          {log.errorCode}
-                        </span>
-                      ) : log.details ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            try {
-                              const parsed = JSON.parse(log.details || "{}");
-                              toast({
-                                title: "Event Details",
-                                description: JSON.stringify(parsed, null, 2),
-                              });
-                            } catch {
-                              toast({ title: "Details", description: log.details || "" });
-                            }
-                          }}
-                          data-testid={`button-details-${log.id}`}
-                        >
-                          <Info className="h-3 w-3 mr-1" />
-                          View
-                        </Button>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
+          <>
+            <ScrollArea className="h-[500px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Time</TableHead>
+                    <TableHead>Trace ID</TableHead>
+                    <TableHead>Event</TableHead>
+                    <TableHead>Request</TableHead>
+                    <TableHead>App</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Details</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </ScrollArea>
+                </TableHeader>
+                <TableBody>
+                  {paginatedLogs?.map((log) => (
+                    <TableRow key={log.id} className="text-sm">
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatTime(log.createdAt)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <code className="text-xs font-mono truncate max-w-[100px]" title={log.traceId}>
+                            {log.traceId.substring(0, 16)}...
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => copyToClipboard(log.traceId)}
+                            data-testid={`button-copy-trace-${log.id}`}
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => setSelectedTraceId(log.traceId)}
+                            data-testid={`button-view-trace-${log.id}`}
+                          >
+                            <Eye className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`font-medium ${getEventColor(log.event)}`}>
+                          {log.event}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="text-xs">
+                          {log.requestMethod && log.requestPath ? (
+                            <code className="bg-muted px-1 py-0.5 rounded">
+                              {log.requestMethod} {log.requestPath}
+                            </code>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                          {log.redirectUri && (
+                            <div className="mt-1 truncate max-w-[200px]" title={log.redirectUri}>
+                              <span className="text-muted-foreground">→ </span>
+                              <span className="text-blue-600">{log.redirectUri}</span>
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {log.appName ? (
+                          <span className="truncate max-w-[100px]" title={log.appName}>
+                            {log.appName}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <Badge className={getStatusColor(log.status)}>
+                            {log.status}
+                          </Badge>
+                          {log.responseStatus && (
+                            <span className={`text-xs ${log.responseStatus >= 400 ? 'text-red-600' : 'text-green-600'}`}>
+                              HTTP {log.responseStatus}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {log.durationMs}ms
+                      </TableCell>
+                      <TableCell>
+                        {log.errorCode ? (
+                          <div className="flex flex-col">
+                            <span className="text-xs text-red-600 font-medium">{log.errorCode}</span>
+                            {log.errorMessage && (
+                              <span className="text-xs text-muted-foreground truncate max-w-[150px]" title={log.errorMessage}>
+                                {log.errorMessage}
+                              </span>
+                            )}
+                          </div>
+                        ) : log.details || log.errorDetails ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedTraceId(log.traceId)}
+                            data-testid={`button-details-${log.id}`}
+                          >
+                            <Terminal className="h-3 w-3 mr-1" />
+                            View
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={validCurrentPage === 1}
+                  data-testid="button-first-page"
+                >
+                  First
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={validCurrentPage === 1}
+                  data-testid="button-prev-page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm text-muted-foreground px-2">
+                  Page {validCurrentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={validCurrentPage === totalPages}
+                  data-testid="button-next-page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={validCurrentPage === totalPages}
+                  data-testid="button-last-page"
+                >
+                  Last
+                </Button>
+              </div>
+            )}
+          </>
         )}
 
         <Dialog open={!!selectedTraceId} onOpenChange={() => setSelectedTraceId(null)}>
@@ -2955,14 +3064,48 @@ function OAuthAuditLogsTab() {
                           <span className="text-lg font-semibold">{idx + 1}.</span>
                           <span className={`font-medium ${getEventColor(log.event)}`}>{log.event}</span>
                           <Badge className={getStatusColor(log.status)}>{log.status}</Badge>
+                          {log.responseStatus && (
+                            <Badge variant="outline" className={log.responseStatus >= 400 ? 'border-red-500 text-red-600' : 'border-green-500 text-green-600'}>
+                              HTTP {log.responseStatus}
+                            </Badge>
+                          )}
                         </div>
                         <span className="text-xs text-muted-foreground">{log.durationMs}ms</span>
                       </div>
+
+                      {(log.requestMethod || log.requestPath) && (
+                        <div className="mb-3 p-2 bg-slate-900 dark:bg-slate-950 rounded font-mono text-sm">
+                          <div className="flex items-center gap-2 text-green-400">
+                            <Terminal className="h-4 w-4" />
+                            <span className="text-yellow-400">{log.requestMethod}</span>
+                            <span className="text-white">{log.requestPath}</span>
+                          </div>
+                          {log.redirectUri && (
+                            <div className="mt-1 text-blue-400 text-xs">
+                              <span className="text-gray-500">→ redirect_uri: </span>
+                              {log.redirectUri}
+                            </div>
+                          )}
+                          {log.clientId && (
+                            <div className="text-cyan-400 text-xs">
+                              <span className="text-gray-500">→ client_id: </span>
+                              {log.clientId}
+                            </div>
+                          )}
+                          {log.scope && (
+                            <div className="text-purple-400 text-xs">
+                              <span className="text-gray-500">→ scope: </span>
+                              {log.scope}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         {log.appName && (
                           <div>
                             <span className="text-muted-foreground">App: </span>
-                            <span>{log.appName}</span>
+                            <span className="font-medium">{log.appName}</span>
                           </div>
                         )}
                         {log.userEmail && (
@@ -2971,42 +3114,59 @@ function OAuthAuditLogsTab() {
                             <span>{log.userEmail}</span>
                           </div>
                         )}
-                        {log.clientId && (
+                        {log.ipAddress && (
                           <div>
-                            <span className="text-muted-foreground">Client ID: </span>
-                            <code className="text-xs">{log.clientId}</code>
+                            <span className="text-muted-foreground">IP: </span>
+                            <code className="text-xs">{log.ipAddress}</code>
                           </div>
                         )}
-                        {log.scope && (
-                          <div>
-                            <span className="text-muted-foreground">Scope: </span>
-                            <span>{log.scope}</span>
-                          </div>
-                        )}
-                        {log.redirectUri && (
+                        {log.userAgent && (
                           <div className="col-span-2">
-                            <span className="text-muted-foreground">Redirect URI: </span>
-                            <code className="text-xs break-all">{log.redirectUri}</code>
-                          </div>
-                        )}
-                        {log.errorCode && (
-                          <div className="col-span-2 text-red-600">
-                            <span className="font-medium">Error: </span>
-                            {log.errorCode} - {log.errorMessage}
-                          </div>
-                        )}
-                        {log.details && (
-                          <div className="col-span-2">
-                            <span className="text-muted-foreground">Details: </span>
-                            <pre className="text-xs mt-1 p-2 bg-muted rounded overflow-x-auto">
-                              {JSON.stringify(JSON.parse(log.details), null, 2)}
-                            </pre>
+                            <span className="text-muted-foreground">User Agent: </span>
+                            <span className="text-xs truncate">{log.userAgent}</span>
                           </div>
                         )}
                       </div>
-                      <div className="mt-2 text-xs text-muted-foreground">
+
+                      {log.errorCode && (
+                        <div className="mt-3 p-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded">
+                          <div className="text-red-600 font-medium text-sm">
+                            {log.errorCode}
+                          </div>
+                          {log.errorMessage && (
+                            <div className="text-red-500 text-xs mt-1">{log.errorMessage}</div>
+                          )}
+                          {log.errorDetails && (
+                            <pre className="text-xs mt-2 p-2 bg-red-100 dark:bg-red-900 rounded overflow-x-auto text-red-700 dark:text-red-300">
+                              {(() => {
+                                try {
+                                  return JSON.stringify(JSON.parse(log.errorDetails), null, 2);
+                                } catch {
+                                  return log.errorDetails;
+                                }
+                              })()}
+                            </pre>
+                          )}
+                        </div>
+                      )}
+
+                      {log.details && (
+                        <div className="mt-3">
+                          <span className="text-xs text-muted-foreground font-medium">Response Details:</span>
+                          <pre className="text-xs mt-1 p-2 bg-muted rounded overflow-x-auto font-mono">
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(log.details), null, 2);
+                              } catch {
+                                return log.details;
+                              }
+                            })()}
+                          </pre>
+                        </div>
+                      )}
+
+                      <div className="mt-2 text-xs text-muted-foreground border-t pt-2">
                         {formatTime(log.createdAt)}
-                        {log.ipAddress && ` | IP: ${log.ipAddress}`}
                       </div>
                     </CardContent>
                   </Card>
