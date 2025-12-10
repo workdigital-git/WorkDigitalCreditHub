@@ -167,9 +167,12 @@ function UsersTab() {
     isAdmin: false,
   });
 
-  const { data: users, isLoading } = useQuery<UserWithWallet[]>({
+  const { data: users, isLoading, error, isError } = useQuery<UserWithWallet[]>({
     queryKey: ["/api/admin/users"],
   });
+
+  // Debug logging
+  console.log("[Admin Users] Query state:", { usersCount: users?.length, isLoading, isError, error: error?.message });
 
   const creditMutation = useMutation({
     mutationFn: async () => {
@@ -279,6 +282,11 @@ function UsersTab() {
               {[...Array(5)].map((_, i) => (
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
+            </div>
+          ) : isError ? (
+            <div className="text-center py-8 text-destructive">
+              <p className="font-medium">Failed to load users</p>
+              <p className="text-sm text-muted-foreground">{error?.message || "Unknown error"}</p>
             </div>
           ) : (
             <Table>
