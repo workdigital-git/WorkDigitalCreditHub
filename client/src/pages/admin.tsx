@@ -914,6 +914,10 @@ function AppsTab() {
                 <li><strong>CREDITS_HUB_API_KEY</strong> = For server-side API calls (balance checks, debits)</li>
                 <li><strong>CREDITS_HUB_URL</strong> = Base URL for all Credits Hub endpoints</li>
               </ul>
+              <p className="text-xs text-blue-800 dark:text-blue-200 pt-2 border-t border-blue-200 dark:border-blue-700">
+                <strong>Important:</strong> You must provide your app's <strong>Callback URL</strong> (e.g., https://yourapp.replit.app/auth/callback) 
+                when registering. This is where users are redirected after signing in via Credits Hub.
+              </p>
             </div>
             <div className="space-y-1">
               <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_CLIENT_ID</Label>
