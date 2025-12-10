@@ -333,13 +333,16 @@ async function authMiddleware(req: AuthRequest, res: Response, next: NextFunctio
     }
 
     if (!token) {
+      console.log("[Auth] No token found in request to:", req.path);
       return res.status(401).json({ message: "Authentication required" });
     }
 
     const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; email: string; isAdmin: boolean };
+    console.log("[Auth] Token verified for user:", decoded.email, "path:", req.path);
     req.user = { id: decoded.userId, email: decoded.email, isAdmin: decoded.isAdmin };
     next();
   } catch (error) {
+    console.error("[Auth] Token verification failed:", error instanceof Error ? error.message : "Unknown error", "path:", req.path);
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 }
@@ -1158,7 +1161,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/dashboard", authMiddleware, async (req: AuthRequest, res) => {
     try {
+      console.log("[Dashboard] Request from user:", req.user?.id, req.user?.email);
+      if (!req.user) {
+        console.error("[Dashboard] ERROR: req.user is undefined after auth middleware");
+        return res.status(401).json({ message: "User not authenticated" });
+      }
       const wallet = await storage.getWalletByUserId(req.user!.id);
+      console.log("[Dashboard] Wallet found:", wallet ? wallet.id : "NO WALLET");
       const subscriptions = await storage.getAppSubscriptionsByUserId(req.user!.id);
       const paymentMethodsCount = (await storage.getPaymentMethodsByUserId(req.user!.id)).length;
       const allApps = await storage.getAllApps();
