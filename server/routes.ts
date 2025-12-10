@@ -2951,53 +2951,89 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   app.post("/api/v2/balance", async (req, res) => {
+    const traceId = generateTraceId();
+    const ctx: OAuthAuditContext = {
+      traceId,
+      startTime: Date.now(),
+      stage: "API_CALL",
+      requestMethod: "POST",
+      requestPath: "/api/v2/balance",
+      ipAddress: req.ip || req.socket.remoteAddress,
+      userAgent: req.headers["user-agent"],
+    };
+    
     try {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
-        return res.status(401).json({ error: "missing_api_key", message: "API key required in Authorization header" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "missing_api_key", "API key required in Authorization header");
+        return res.status(401).json({ error: "missing_api_key", message: "API key required in Authorization header", trace_id: traceId });
       }
 
       const key = authHeader.slice(7);
+      const keyPrefix = key.substring(0, 12);
+      ctx.clientId = keyPrefix;
+      
       const keyHash = hashToken(key);
       const appApiKey = await storage.getAppApiKeyByHash(keyHash);
 
       if (!appApiKey) {
-        return res.status(401).json({ error: "invalid_api_key", message: "Invalid or revoked API key" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "invalid_api_key", "Invalid or revoked API key", { keyPrefix });
+        return res.status(401).json({ error: "invalid_api_key", message: "Invalid or revoked API key", trace_id: traceId });
       }
 
+      const app = await storage.getApp(appApiKey.appId);
+      ctx.appId = appApiKey.appId;
+      ctx.appName = app?.name || "Unknown App";
+
       if (appApiKey.expiresAt && appApiKey.expiresAt < new Date()) {
-        return res.status(401).json({ error: "expired_api_key", message: "API key has expired" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "expired_api_key", "API key has expired");
+        return res.status(401).json({ error: "expired_api_key", message: "API key has expired", trace_id: traceId });
       }
 
       if (!appApiKey.scopes.includes("balance:read")) {
-        return res.status(403).json({ error: "insufficient_scope", message: "API key does not have balance:read scope" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "insufficient_scope", "API key does not have balance:read scope");
+        return res.status(403).json({ error: "insufficient_scope", message: "API key does not have balance:read scope", trace_id: traceId });
       }
 
       await storage.updateAppApiKeyLastUsed(appApiKey.id);
 
       const { user_email } = req.body;
       if (!user_email) {
-        return res.status(400).json({ error: "missing_user_email", message: "user_email is required" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "invalid_request", "user_email is required");
+        return res.status(400).json({ error: "missing_user_email", message: "user_email is required", trace_id: traceId });
       }
+      
+      ctx.userEmail = user_email;
 
       const user = await storage.getUserByEmail(user_email);
       if (!user) {
-        return res.status(404).json({ error: "user_not_found", message: "User not found" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "user_not_found", "User not found");
+        return res.status(404).json({ error: "user_not_found", message: "User not found", trace_id: traceId });
       }
+      
+      ctx.userId = user.id;
 
       const subscription = await storage.getAppSubscription(user.id, appApiKey.appId);
       if (!subscription || subscription.status !== "ACTIVE") {
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "access_denied", "User has not authorized this app");
         return res.status(403).json({ 
           error: "user_not_authorized", 
           message: "User has not authorized this app to access their account",
-          authorization_required: true
+          authorization_required: true,
+          trace_id: traceId
         });
       }
 
       const wallet = await storage.getWalletByUserId(user.id);
       if (!wallet) {
-        return res.status(404).json({ error: "wallet_not_found", message: "User wallet not found" });
+        await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "wallet_not_found", "User wallet not found");
+        return res.status(404).json({ error: "wallet_not_found", message: "User wallet not found", trace_id: traceId });
       }
+
+      await logOAuthEvent(ctx, "API_BALANCE_CHECK_SUCCESS", "SUCCESS", undefined, undefined, { 
+        balanceCents: wallet.balanceCents, 
+        currency: wallet.currency 
+      });
 
       res.json({
         user_email,
@@ -3007,7 +3043,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       });
     } catch (error) {
       console.error("V2 balance error:", error);
-      res.status(500).json({ error: "server_error", message: "Failed to get balance" });
+      await logOAuthEvent(ctx, "API_BALANCE_CHECK_FAILED", "FAILURE", "server_error", "Failed to get balance");
+      res.status(500).json({ error: "server_error", message: "Failed to get balance", trace_id: traceId });
     }
   });
 

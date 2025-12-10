@@ -71,6 +71,7 @@ import {
   XCircle,
   ChevronLeft,
   ChevronRight,
+  Download,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
@@ -2857,6 +2858,7 @@ interface OAuthAuditLog {
   id: string;
   traceId: string;
   event: string;
+  stage: string | null;
   clientId: string | null;
   appName: string | null;
   userId: string | null;
@@ -2874,6 +2876,7 @@ interface OAuthAuditLog {
   requestPath: string | null;
   responseStatus: number | null;
   durationMs: number;
+  troubleshootingHint: string | null;
   createdAt: string;
 }
 
@@ -2975,6 +2978,48 @@ function OAuthAuditLogsTab() {
     toast({ title: "Copied to clipboard" });
   };
 
+  const handleDownloadLogs = () => {
+    if (!logs || logs.length === 0) {
+      toast({ title: "No logs to download", variant: "destructive" });
+      return;
+    }
+    
+    const recentLogs = logs.slice(0, 25);
+    const logText = recentLogs.map((log, index) => {
+      const lines = [
+        `=== Log Entry ${index + 1} ===`,
+        `Time: ${formatTime(log.createdAt)}`,
+        `Trace ID: ${log.traceId}`,
+        `Event: ${log.event}`,
+        `Status: ${log.status}`,
+        `Stage: ${log.stage || 'N/A'}`,
+        `Request: ${log.requestMethod || ''} ${log.requestPath || ''}`,
+        `App: ${log.appName || 'N/A'} (${log.clientId || 'N/A'})`,
+        `User: ${log.userEmail || 'N/A'}`,
+        `Duration: ${log.durationMs || 0}ms`,
+      ];
+      if (log.errorCode) lines.push(`Error Code: ${log.errorCode}`);
+      if (log.errorMessage) lines.push(`Error Message: ${log.errorMessage}`);
+      if (log.troubleshootingHint) lines.push(`Troubleshooting: ${log.troubleshootingHint}`);
+      if (log.details) lines.push(`Details: ${log.details}`);
+      lines.push(`IP: ${log.ipAddress || 'N/A'}`);
+      lines.push(`User Agent: ${log.userAgent || 'N/A'}`);
+      lines.push('');
+      return lines.join('\n');
+    }).join('\n');
+    
+    const blob = new Blob([logText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `oauth-audit-logs-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast({ title: `Downloaded ${recentLogs.length} log entries` });
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -2988,16 +3033,28 @@ function OAuthAuditLogsTab() {
               Monitor OAuth authorization and token exchange flows in real-time
             </CardDescription>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={isFetching}
-            data-testid="button-refresh-oauth-logs"
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadLogs}
+              disabled={!logs || logs.length === 0}
+              data-testid="button-download-oauth-logs"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Export 25
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={isFetching}
+              data-testid="button-refresh-oauth-logs"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
