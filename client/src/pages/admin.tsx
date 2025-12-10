@@ -965,11 +965,14 @@ function AppsTab() {
             <div className="space-y-4 rounded-lg border p-4 bg-muted/30">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Key className="h-4 w-4" />
-                Client Credentials
+                Required Environment Variables
               </div>
+              <p className="text-xs text-muted-foreground">
+                Copy these values to set in your app's Secrets/Environment Variables:
+              </p>
               <div className="space-y-3">
                 <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Client ID</Label>
+                  <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_CLIENT_ID</Label>
                   <div className="flex gap-2">
                     <Input
                       value={editApp?.clientId || ""}
@@ -988,7 +991,7 @@ function AppsTab() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Client Secret</Label>
+                  <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_CLIENT_SECRET</Label>
                   <div className="flex gap-2">
                     <Input
                       value={editApp?.clientSecret || ""}
@@ -1003,6 +1006,25 @@ function AppsTab() {
                       data-testid="button-copy-edit-client-secret"
                     >
                       {copiedField === "editClientSecret" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_URL</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value="https://workdigitalcredithub.com"
+                      readOnly
+                      className="font-mono text-sm bg-background"
+                      data-testid="input-edit-hub-url"
+                    />
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard("https://workdigitalcredithub.com", "hubUrl")}
+                      data-testid="button-copy-hub-url"
+                    >
+                      {copiedField === "hubUrl" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>
