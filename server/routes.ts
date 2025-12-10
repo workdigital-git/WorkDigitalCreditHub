@@ -1749,7 +1749,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
+      console.log("[Admin Users] Fetching all users...");
       const users = await storage.getAllUsers();
+      console.log(`[Admin Users] Found ${users.length} users in database`);
       const usersWithWallets = await Promise.all(
         users.map(async (user) => {
           const wallet = await storage.getWalletByUserId(user.id);
@@ -1757,6 +1759,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           return { ...adminUser, wallet };
         })
       );
+      console.log(`[Admin Users] Returning ${usersWithWallets.length} users with wallets`);
       res.json(usersWithWallets);
     } catch (error) {
       console.error("Admin users error:", error);
