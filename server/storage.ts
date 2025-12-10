@@ -125,6 +125,7 @@ export interface IStorage {
   getAllAppApiKeys(): Promise<(AppApiKey & { app: App })[]>;
   createAppApiKey(key: Omit<AppApiKey, "id" | "createdAt" | "lastUsedAt" | "revokedAt">): Promise<AppApiKey>;
   revokeAppApiKey(id: string): Promise<boolean>;
+  deleteAppApiKey(id: string): Promise<boolean>;
   updateAppApiKeyLastUsed(id: string): Promise<void>;
 
   createRefreshToken(userId: string, tokenHash: string, expiresAt: Date): Promise<RefreshToken>;
@@ -559,6 +560,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(appApiKeys.id, id))
       .returning();
     return !!updated;
+  }
+
+  async deleteAppApiKey(id: string): Promise<boolean> {
+    const result = await db.delete(appApiKeys).where(eq(appApiKeys.id, id)).returning();
+    return result.length > 0;
   }
 
   async updateAppApiKeyLastUsed(id: string): Promise<void> {

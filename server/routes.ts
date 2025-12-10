@@ -2231,7 +2231,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const app = await storage.getApp(existingKey.appId);
       
-      const success = await storage.revokeAppApiKey(id);
+      const success = await storage.deleteAppApiKey(id);
       if (!success) {
         return res.status(404).json({ message: "API key not found" });
       }
@@ -2241,16 +2241,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         eventType: "ADMIN_ACTION",
         entityType: "APP_API_KEY",
         entityId: id,
-        action: `Revoked API key "${existingKey.name}" for app "${app?.name || existingKey.appId}"`,
+        action: `Deleted API key "${existingKey.name}" for app "${app?.name || existingKey.appId}"`,
         details: JSON.stringify({ appId: existingKey.appId, keyPrefix: existingKey.keyPrefix }),
         ipAddress: req.ip || null,
         userAgent: req.headers["user-agent"] || null,
       });
 
-      res.json({ message: "API key revoked successfully" });
+      res.json({ message: "API key deleted successfully" });
     } catch (error) {
-      console.error("Revoke app API key error:", error);
-      res.status(500).json({ message: "Failed to revoke API key" });
+      console.error("Delete app API key error:", error);
+      res.status(500).json({ message: "Failed to delete API key" });
     }
   });
 
