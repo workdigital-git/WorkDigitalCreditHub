@@ -897,14 +897,15 @@ function AppsTab() {
       <Dialog open={!!viewCredentials} onOpenChange={(open) => !open && setViewCredentials(null)}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>App Credentials</DialogTitle>
+            <DialogTitle>App Credentials for {viewCredentials?.name}</DialogTitle>
             <DialogDescription>
-              Use these credentials to integrate {viewCredentials?.name} with this platform
+              Copy these values to your app's Secrets/Environment Variables
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Client ID</Label>
+            <div className="space-y-1">
+              <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_CLIENT_ID</Label>
+              <p className="text-xs text-muted-foreground mb-1">For OAuth2 SSO authentication</p>
               <div className="flex gap-2">
                 <Input
                   value={viewCredentials?.clientId || ""}
@@ -924,8 +925,9 @@ function AppsTab() {
                 </Button>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Client Secret</Label>
+            <div className="space-y-1">
+              <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_CLIENT_SECRET</Label>
+              <p className="text-xs text-muted-foreground mb-1">For OAuth2 SSO authentication</p>
               <div className="flex gap-2">
                 <Input
                   value={viewCredentials?.clientSecret || ""}
@@ -945,9 +947,40 @@ function AppsTab() {
                 </Button>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Callback URL</Label>
-              <Input value={viewCredentials?.callbackUrl || ""} readOnly />
+            <div className="space-y-1">
+              <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_URL</Label>
+              <p className="text-xs text-muted-foreground mb-1">Base URL for all API calls</p>
+              <div className="flex gap-2">
+                <Input
+                  value="https://workdigitalcredithub.com"
+                  readOnly
+                  className="font-mono text-sm"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => copyToClipboard("https://workdigitalcredithub.com", "hubUrl")}
+                >
+                  {copiedField === "hubUrl" ? (
+                    <Check className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </div>
+            <div className="pt-2 border-t">
+              <div className="space-y-1">
+                <Label className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">CREDITS_HUB_API_KEY</Label>
+                <p className="text-xs text-muted-foreground mb-1">For server-to-server API calls (balance checks, debits)</p>
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Generate API keys in the "App API Keys" section below
+                </p>
+              </div>
+            </div>
+            <div className="space-y-1 pt-2 border-t">
+              <Label className="text-xs text-muted-foreground">Callback URL (configured)</Label>
+              <Input value={viewCredentials?.callbackUrl || ""} readOnly className="text-sm" />
             </div>
           </div>
         </DialogContent>
