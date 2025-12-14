@@ -20,7 +20,6 @@ import {
 } from "@/components/ui/form";
 import {
   Shield,
-  Building2,
   CheckCircle2,
   AlertTriangle,
   Loader2,
@@ -29,6 +28,7 @@ import {
   Eye,
   CreditCard,
 } from "lucide-react";
+import { WorkDigitalLogo } from "@/components/work-digital-logo";
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -155,9 +155,7 @@ function LoginStep({
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="text-center">
         <div className="flex justify-center mb-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            <Building2 className="h-8 w-8 text-primary" />
-          </div>
+          <WorkDigitalLogo variant="full" size="lg" />
         </div>
         <CardTitle>Sign in to Work Digital</CardTitle>
         <CardDescription>
@@ -303,9 +301,7 @@ function ConsentStep({
     <Card className="w-full max-w-md mx-auto">
       <CardHeader className="text-center">
         <div className="flex justify-center items-center gap-4 mb-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <Building2 className="h-7 w-7 text-primary" />
-          </div>
+          <WorkDigitalLogo variant="gear" size="lg" className="rounded-full" />
           <div className="flex h-6 w-6 items-center justify-center">
             <Shield className="h-6 w-6 text-muted-foreground" />
           </div>
