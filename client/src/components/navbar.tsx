@@ -21,8 +21,8 @@ import {
   Menu,
   X,
   Book,
-  Building2,
 } from "lucide-react";
+import { WorkDigitalLogo } from "@/components/work-digital-logo";
 import { useState } from "react";
 
 const navItems = [
@@ -48,15 +48,10 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-16 items-center justify-between gap-4 px-4 md:px-6">
-        <Link href="/dashboard" className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
-            <Building2 className="h-4 w-4 text-primary-foreground" />
-          </div>
-          <div className="hidden sm:flex flex-col leading-none">
-            <span className="font-semibold tracking-tight text-sm" data-testid="text-logo">
-              Work Digital
-            </span>
-            <span className="text-[10px] text-muted-foreground">
+        <Link href="/dashboard" className="flex items-center gap-3">
+          <WorkDigitalLogo variant="full" size="md" />
+          <div className="hidden sm:block border-l border-border pl-3">
+            <span className="text-xs text-muted-foreground font-medium" data-testid="text-logo">
               Credit Portal
             </span>
           </div>

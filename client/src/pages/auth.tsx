@@ -17,12 +17,13 @@ import {
   Wallet, 
   ArrowRight,
   CheckCircle2,
-  Globe,
   Lock,
   Zap
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
+import { WorkDigitalLogo } from "@/components/work-digital-logo";
+import darkLogo from "@assets/Work_Digital_Large_Logo_-_Gray_Background_with_White_Letters_1765734468272.png";
 
 export default function AuthPage() {
   const [, setLocation] = useLocation();
@@ -182,10 +183,7 @@ export default function AuthPage() {
         <div className="relative z-10">
           {/* Logo */}
           <div className="flex items-center gap-3 mb-12">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-              <Globe className="h-5 w-5" />
-            </div>
-            <span className="text-xl font-semibold tracking-tight">Work Digital</span>
+            <img src={darkLogo} alt="Work Digital" className="h-10 object-contain" />
           </div>
 
           {/* Hero Text */}
@@ -290,14 +288,9 @@ export default function AuthPage() {
           {/* Mobile Logo */}
           <div className="lg:hidden text-center space-y-2 mb-8">
             <div className="flex justify-center mb-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
-                <Globe className="h-6 w-6 text-primary-foreground" />
-              </div>
+              <WorkDigitalLogo variant="full" size="lg" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-auth-title">
-              Work Digital
-            </h1>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground" data-testid="text-auth-title">
               Client Credit Portal
             </p>
           </div>
