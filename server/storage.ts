@@ -20,6 +20,8 @@ import {
   oauthAuditLogs,
   paymentGatewaySettings,
   oauthIdentities,
+  referrals,
+  referralSettings,
   type User,
   type InsertUser,
   type Wallet,
@@ -61,6 +63,10 @@ import {
   type InsertPaymentGatewaySettings,
   type OAuthIdentity,
   type InsertOAuthIdentity,
+  type Referral,
+  type InsertReferral,
+  type ReferralSettings,
+  type InsertReferralSettings,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -202,6 +208,19 @@ export interface IStorage {
   getOAuthIdentitiesByUserId(userId: string): Promise<OAuthIdentity[]>;
   createOAuthIdentity(identity: Omit<OAuthIdentity, "id" | "createdAt">): Promise<OAuthIdentity>;
   updateOAuthIdentityLastLogin(id: string): Promise<void>;
+
+  getReferralSettings(): Promise<ReferralSettings | undefined>;
+  updateReferralSettings(data: Partial<ReferralSettings>): Promise<ReferralSettings | undefined>;
+  getUserByReferralCode(code: string): Promise<User | undefined>;
+  generateReferralCode(userId: string): Promise<string>;
+  createReferral(referral: Omit<Referral, "id" | "createdAt" | "qualifiedAt" | "referrerBonusPaidAt" | "referredBonusPaidAt">): Promise<Referral>;
+  getReferral(id: string): Promise<Referral | undefined>;
+  getReferralByReferredUserId(referredUserId: string): Promise<Referral | undefined>;
+  getReferralsByReferrerId(referrerId: string): Promise<Referral[]>;
+  updateReferral(id: string, data: Partial<Referral>): Promise<Referral | undefined>;
+  updateReferralFundedAmount(referredUserId: string, amountCents: number): Promise<void>;
+  getReferralStats(userId: string): Promise<{ totalReferrals: number; qualifiedReferrals: number; pendingReferrals: number; totalEarnings: number }>;
+  getAllReferrals(limit?: number): Promise<(Referral & { referrer: User; referredUser: User })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1180,6 +1199,125 @@ export class DatabaseStorage implements IStorage {
       .update(oauthIdentities)
       .set({ lastLoginAt: new Date() })
       .where(eq(oauthIdentities.id, id));
+  }
+
+  async getReferralSettings(): Promise<ReferralSettings | undefined> {
+    const [settings] = await db.select().from(referralSettings).limit(1);
+    return settings || undefined;
+  }
+
+  async updateReferralSettings(data: Partial<ReferralSettings>): Promise<ReferralSettings | undefined> {
+    const existing = await this.getReferralSettings();
+    if (!existing) {
+      const [created] = await db.insert(referralSettings).values({
+        qualificationThresholdCents: data.qualificationThresholdCents ?? 2000,
+        referrerBonusCents: data.referrerBonusCents ?? 500,
+        referredBonusCents: data.referredBonusCents ?? 500,
+        expirationDays: data.expirationDays ?? 90,
+        maxReferralsPerUser: data.maxReferralsPerUser ?? 100,
+        isActive: data.isActive ?? true,
+      }).returning();
+      return created;
+    }
+    const [updated] = await db
+      .update(referralSettings)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(referralSettings.id, existing.id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getUserByReferralCode(code: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.referralCode, code));
+    return user || undefined;
+  }
+
+  async generateReferralCode(userId: string): Promise<string> {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code: string;
+    let attempts = 0;
+    do {
+      code = '';
+      for (let i = 0; i < 8; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const existing = await this.getUserByReferralCode(code);
+      if (!existing) break;
+      attempts++;
+    } while (attempts < 10);
+
+    await db.update(users).set({ referralCode: code, updatedAt: new Date() }).where(eq(users.id, userId));
+    return code;
+  }
+
+  async createReferral(referral: Omit<Referral, "id" | "createdAt" | "qualifiedAt" | "referrerBonusPaidAt" | "referredBonusPaidAt">): Promise<Referral> {
+    const [created] = await db.insert(referrals).values(referral).returning();
+    return created;
+  }
+
+  async getReferral(id: string): Promise<Referral | undefined> {
+    const [referral] = await db.select().from(referrals).where(eq(referrals.id, id));
+    return referral || undefined;
+  }
+
+  async getReferralByReferredUserId(referredUserId: string): Promise<Referral | undefined> {
+    const [referral] = await db.select().from(referrals).where(eq(referrals.referredUserId, referredUserId));
+    return referral || undefined;
+  }
+
+  async getReferralsByReferrerId(referrerId: string): Promise<Referral[]> {
+    return await db.select().from(referrals).where(eq(referrals.referrerId, referrerId)).orderBy(desc(referrals.createdAt));
+  }
+
+  async updateReferral(id: string, data: Partial<Referral>): Promise<Referral | undefined> {
+    const [updated] = await db.update(referrals).set(data).where(eq(referrals.id, id)).returning();
+    return updated || undefined;
+  }
+
+  async updateReferralFundedAmount(referredUserId: string, amountCents: number): Promise<void> {
+    const referral = await this.getReferralByReferredUserId(referredUserId);
+    if (!referral || referral.status === 'REWARDED' || referral.status === 'EXPIRED') return;
+
+    const newFundedAmount = (referral.referredUserFundedCents || 0) + amountCents;
+    await db.update(referrals).set({
+      referredUserFundedCents: newFundedAmount,
+    }).where(eq(referrals.id, referral.id));
+
+    if (newFundedAmount >= referral.qualificationThresholdCents && referral.status === 'PENDING') {
+      await db.update(referrals).set({
+        status: 'QUALIFIED',
+        qualifiedAt: new Date(),
+      }).where(eq(referrals.id, referral.id));
+    }
+  }
+
+  async getReferralStats(userId: string): Promise<{ totalReferrals: number; qualifiedReferrals: number; pendingReferrals: number; totalEarnings: number }> {
+    const userReferrals = await this.getReferralsByReferrerId(userId);
+    const totalReferrals = userReferrals.length;
+    const qualifiedReferrals = userReferrals.filter(r => r.status === 'QUALIFIED' || r.status === 'REWARDED').length;
+    const pendingReferrals = userReferrals.filter(r => r.status === 'PENDING').length;
+    const totalEarnings = userReferrals
+      .filter(r => r.status === 'REWARDED')
+      .reduce((sum, r) => sum + (r.referrerBonusCents || 0), 0);
+    return { totalReferrals, qualifiedReferrals, pendingReferrals, totalEarnings };
+  }
+
+  async getAllReferrals(limit?: number): Promise<(Referral & { referrer: User; referredUser: User })[]> {
+    const allReferrals = await db
+      .select()
+      .from(referrals)
+      .orderBy(desc(referrals.createdAt))
+      .limit(limit || 100);
+
+    const result: (Referral & { referrer: User; referredUser: User })[] = [];
+    for (const ref of allReferrals) {
+      const referrer = await this.getUser(ref.referrerId);
+      const referredUser = await this.getUser(ref.referredUserId);
+      if (referrer && referredUser) {
+        result.push({ ...ref, referrer, referredUser });
+      }
+    }
+    return result;
   }
 }
 

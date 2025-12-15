@@ -413,6 +413,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }
       }
       const passwordHash = await bcrypt.hash(password, 12);
+      
+      const { referralCode: inputReferralCode } = req.body;
+      let referrerUser = null;
+      let referredByUserId: string | null = null;
+      
+      if (inputReferralCode) {
+        referrerUser = await storage.getUserByReferralCode(inputReferralCode.toUpperCase());
+        if (referrerUser) {
+          referredByUserId = referrerUser.id;
+        }
+      }
+      
       const user = await storage.createUser({
         email,
         passwordHash,
@@ -423,13 +435,47 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         twoFactorEnabled: false,
         twoFactorMethod: "TOTP",
         twoFactorSecret: null,
+        referralCode: null,
+        referredByUserId,
       });
 
-      await storage.createWallet({
+      const wallet = await storage.createWallet({
         userId: user.id,
         currency: "USD",
         balanceCents: 0,
       });
+      
+      if (referrerUser && referredByUserId) {
+        const settings = await storage.getReferralSettings();
+        const expiresAt = settings?.expirationDays 
+          ? new Date(Date.now() + settings.expirationDays * 24 * 60 * 60 * 1000)
+          : new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+        
+        await storage.createReferral({
+          referrerId: referrerUser.id,
+          referredUserId: user.id,
+          referralCode: inputReferralCode.toUpperCase(),
+          status: "PENDING",
+          referredUserFundedCents: 0,
+          qualificationThresholdCents: settings?.qualificationThresholdCents || 2000,
+          referrerBonusCents: settings?.referrerBonusCents || 500,
+          referredBonusCents: settings?.referredBonusCents || 500,
+          expiresAt,
+        });
+        
+        if (settings?.referredBonusCents && settings.referredBonusCents > 0) {
+          await storage.updateWalletBalance(wallet.id, settings.referredBonusCents);
+          await storage.createTransaction({
+            walletId: wallet.id,
+            type: "CREDIT",
+            source: "REFERRAL_WELCOME_BONUS",
+            amountCents: settings.referredBonusCents,
+            description: `Welcome bonus for joining via referral`,
+            status: "COMPLETED",
+            appId: null,
+          });
+        }
+      }
 
       const accessToken = generateAccessToken(user.id, user.email, user.isAdmin);
       const refreshToken = generateRefreshToken();
@@ -3913,6 +3959,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const matchingTx = tx.find(t => t.id === transactionId);
           if (matchingTx) {
             await storage.updateWalletBalance(wallet.id, matchingTx.amountCents);
+            await storage.updateReferralFundedAmount(req.user!.id, matchingTx.amountCents);
           }
         }
 
@@ -3932,6 +3979,163 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("Confirm payment error:", error);
       res.status(500).json({ message: "Failed to confirm payment" });
+    }
+  });
+
+  app.get("/api/referrals/code", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const user = await storage.getUser(req.user!.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
+      let code = user.referralCode;
+      if (!code) {
+        code = await storage.generateReferralCode(req.user!.id);
+      }
+      
+      res.json({ code });
+    } catch (error) {
+      console.error("Get referral code error:", error);
+      res.status(500).json({ message: "Failed to get referral code" });
+    }
+  });
+
+  app.get("/api/referrals/my-referrals", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const referrals = await storage.getReferralsByReferrerId(req.user!.id);
+      const referralsWithUsers = await Promise.all(
+        referrals.map(async (ref) => {
+          const referredUser = await storage.getUser(ref.referredUserId);
+          return {
+            ...ref,
+            referredUserEmail: referredUser?.email || "Unknown",
+            referredUserName: referredUser?.fullName || referredUser?.email?.split("@")[0] || "Unknown",
+          };
+        })
+      );
+      res.json(referralsWithUsers);
+    } catch (error) {
+      console.error("Get my referrals error:", error);
+      res.status(500).json({ message: "Failed to get referrals" });
+    }
+  });
+
+  app.get("/api/referrals/stats", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const stats = await storage.getReferralStats(req.user!.id);
+      const settings = await storage.getReferralSettings();
+      res.json({
+        ...stats,
+        qualificationThreshold: settings?.qualificationThresholdCents || 2000,
+        referrerBonus: settings?.referrerBonusCents || 500,
+        referredBonus: settings?.referredBonusCents || 500,
+      });
+    } catch (error) {
+      console.error("Get referral stats error:", error);
+      res.status(500).json({ message: "Failed to get referral stats" });
+    }
+  });
+
+  app.get("/api/referrals/validate/:code", async (req, res) => {
+    try {
+      const { code } = req.params;
+      const user = await storage.getUserByReferralCode(code.toUpperCase());
+      if (!user) {
+        return res.status(404).json({ valid: false, message: "Invalid referral code" });
+      }
+      res.json({ valid: true, referrerName: user.fullName || user.email.split("@")[0] });
+    } catch (error) {
+      console.error("Validate referral code error:", error);
+      res.status(500).json({ message: "Failed to validate referral code" });
+    }
+  });
+
+  app.post("/api/referrals/process-qualified", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const allReferrals = await storage.getAllReferrals();
+      const qualifiedReferrals = allReferrals.filter(r => r.status === "QUALIFIED");
+      
+      let processed = 0;
+      for (const referral of qualifiedReferrals) {
+        const referrerWallet = await storage.getWalletByUserId(referral.referrerId);
+        if (referrerWallet && referral.referrerBonusCents > 0) {
+          await storage.updateWalletBalance(referrerWallet.id, referral.referrerBonusCents);
+          await storage.createTransaction({
+            walletId: referrerWallet.id,
+            type: "CREDIT",
+            source: "REFERRAL_BONUS",
+            amountCents: referral.referrerBonusCents,
+            description: `Referral bonus for inviting ${referral.referredUser.email}`,
+            status: "COMPLETED",
+            appId: null,
+          });
+          
+          await storage.updateReferral(referral.id, {
+            status: "REWARDED",
+            referrerBonusPaidAt: new Date(),
+          });
+          processed++;
+        }
+      }
+      
+      res.json({ processed, message: `Processed ${processed} qualified referrals` });
+    } catch (error) {
+      console.error("Process qualified referrals error:", error);
+      res.status(500).json({ message: "Failed to process referrals" });
+    }
+  });
+
+  app.get("/api/admin/referrals", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const referrals = await storage.getAllReferrals(100);
+      res.json(referrals.map(r => ({
+        ...r,
+        referrerEmail: r.referrer.email,
+        referrerName: r.referrer.fullName || r.referrer.email.split("@")[0],
+        referredUserEmail: r.referredUser.email,
+        referredUserName: r.referredUser.fullName || r.referredUser.email.split("@")[0],
+      })));
+    } catch (error) {
+      console.error("Get admin referrals error:", error);
+      res.status(500).json({ message: "Failed to get referrals" });
+    }
+  });
+
+  app.get("/api/admin/referral-settings", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const settings = await storage.getReferralSettings();
+      res.json(settings || {
+        qualificationThresholdCents: 2000,
+        referrerBonusCents: 500,
+        referredBonusCents: 500,
+        expirationDays: 90,
+        maxReferralsPerUser: 100,
+        isActive: true,
+      });
+    } catch (error) {
+      console.error("Get referral settings error:", error);
+      res.status(500).json({ message: "Failed to get referral settings" });
+    }
+  });
+
+  app.patch("/api/admin/referral-settings", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { qualificationThresholdCents, referrerBonusCents, referredBonusCents, expirationDays, maxReferralsPerUser, isActive } = req.body;
+      
+      const updated = await storage.updateReferralSettings({
+        qualificationThresholdCents,
+        referrerBonusCents,
+        referredBonusCents,
+        expirationDays,
+        maxReferralsPerUser,
+        isActive,
+      });
+      
+      res.json(updated);
+    } catch (error) {
+      console.error("Update referral settings error:", error);
+      res.status(500).json({ message: "Failed to update referral settings" });
     }
   });
 
