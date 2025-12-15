@@ -142,6 +142,13 @@ export const twoFactorMethodEnum = pgEnum("two_factor_method", ["TOTP", "SMS"]);
 
 export const oauthProviderEnum = pgEnum("oauth_provider", ["REPLIT", "GOOGLE"]);
 
+export const referralStatusEnum = pgEnum("referral_status", [
+  "PENDING",
+  "QUALIFIED",
+  "REWARDED",
+  "EXPIRED"
+]);
+
 export const sessions = pgTable(
   "sessions",
   {
@@ -179,6 +186,8 @@ export const users = pgTable("users", {
   twoFactorEnabled: boolean("two_factor_enabled").default(false).notNull(),
   twoFactorMethod: twoFactorMethodEnum("two_factor_method").default("TOTP"),
   twoFactorSecret: text("two_factor_secret"),
+  referralCode: text("referral_code").unique(),
+  referredByUserId: varchar("referred_by_user_id", { length: 36 }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -226,6 +235,35 @@ export const autoTopupRules = pgTable("auto_topup_rules", {
   thresholdCents: bigint("threshold_cents", { mode: "number" }).notNull(),
   topupAmountCents: bigint("topup_amount_cents", { mode: "number" }).notNull(),
   active: boolean("active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const referrals = pgTable("referrals", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  referrerId: varchar("referrer_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  referredUserId: varchar("referred_user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  referralCode: text("referral_code").notNull(),
+  status: referralStatusEnum("status").default("PENDING").notNull(),
+  referredUserFundedCents: bigint("referred_user_funded_cents", { mode: "number" }).default(0).notNull(),
+  qualificationThresholdCents: bigint("qualification_threshold_cents", { mode: "number" }).default(2000).notNull(),
+  referrerBonusCents: bigint("referrer_bonus_cents", { mode: "number" }).default(500).notNull(),
+  referredBonusCents: bigint("referred_bonus_cents", { mode: "number" }).default(500).notNull(),
+  referrerBonusPaidAt: timestamp("referrer_bonus_paid_at"),
+  referredBonusPaidAt: timestamp("referred_bonus_paid_at"),
+  qualifiedAt: timestamp("qualified_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const referralSettings = pgTable("referral_settings", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  qualificationThresholdCents: bigint("qualification_threshold_cents", { mode: "number" }).default(2000).notNull(),
+  referrerBonusCents: bigint("referrer_bonus_cents", { mode: "number" }).default(500).notNull(),
+  referredBonusCents: bigint("referred_bonus_cents", { mode: "number" }).default(500).notNull(),
+  expirationDays: bigint("expiration_days", { mode: "number" }).default(90).notNull(),
+  maxReferralsPerUser: bigint("max_referrals_per_user", { mode: "number" }).default(100).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -393,6 +431,13 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   appSubscriptions: many(appSubscriptions),
   apiKeys: many(apiKeys),
   refreshTokens: many(refreshTokens),
+  referralsMade: many(referrals, { relationName: "referrer" }),
+  referredBy: one(users, { fields: [users.referredByUserId], references: [users.id] }),
+}));
+
+export const referralsRelations = relations(referrals, ({ one }) => ({
+  referrer: one(users, { fields: [referrals.referrerId], references: [users.id], relationName: "referrer" }),
+  referredUser: one(users, { fields: [referrals.referredUserId], references: [users.id], relationName: "referred" }),
 }));
 
 export const walletsRelations = relations(wallets, ({ one, many }) => ({
@@ -606,6 +651,20 @@ export const insertIntegrationHealthMetricsSchema = createInsertSchema(integrati
   updatedAt: true,
 });
 
+export const insertReferralSchema = createInsertSchema(referrals).omit({
+  id: true,
+  createdAt: true,
+  qualifiedAt: true,
+  referrerBonusPaidAt: true,
+  referredBonusPaidAt: true,
+});
+
+export const insertReferralSettingsSchema = createInsertSchema(referralSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const paymentGatewayEnum = pgEnum("payment_gateway", [
   "STRIPE", "PAYPAL", "COINBASE"
 ]);
@@ -680,3 +739,7 @@ export type IntegrationHealthMetrics = typeof integrationHealthMetrics.$inferSel
 export type InsertIntegrationHealthMetrics = z.infer<typeof insertIntegrationHealthMetricsSchema>;
 export type PaymentGatewaySettings = typeof paymentGatewaySettings.$inferSelect;
 export type InsertPaymentGatewaySettings = z.infer<typeof insertPaymentGatewaySettingsSchema>;
+export type Referral = typeof referrals.$inferSelect;
+export type InsertReferral = z.infer<typeof insertReferralSchema>;
+export type ReferralSettings = typeof referralSettings.$inferSelect;
+export type InsertReferralSettings = z.infer<typeof insertReferralSettingsSchema>;
