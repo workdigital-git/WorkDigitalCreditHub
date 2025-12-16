@@ -21,6 +21,7 @@ import {
   Menu,
   X,
   Book,
+  Gift,
 } from "lucide-react";
 import { WorkDigitalLogo } from "@/components/work-digital-logo";
 import { useState } from "react";
@@ -30,6 +31,7 @@ const navItems = [
   { href: "/wallet", label: "Credits", icon: Wallet },
   { href: "/apps", label: "Services", icon: AppWindow },
   { href: "/billing", label: "Billing", icon: CreditCard },
+  { href: "/referrals", label: "Referrals", icon: Gift },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
