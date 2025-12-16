@@ -5,7 +5,7 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string, totpCode?: string) => Promise<{ requiresTwoFactor?: boolean }>;
-  register: (email: string, password: string, fullName?: string) => Promise<void>;
+  register: (email: string, password: string, fullName?: string, referralCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -59,12 +59,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return {};
   };
 
-  const register = async (email: string, password: string, fullName?: string) => {
+  const register = async (email: string, password: string, fullName?: string, referralCode?: string) => {
     const response = await fetch("/api/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ email, password, fullName }),
+      body: JSON.stringify({ email, password, fullName, referralCode }),
     });
 
     if (!response.ok) {

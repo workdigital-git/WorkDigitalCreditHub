@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { useLocation } from "wouter";
+import { useState, useEffect } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/lib/auth";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +19,8 @@ import {
   ArrowRight,
   CheckCircle2,
   Lock,
-  Zap
+  Zap,
+  Gift
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
@@ -36,7 +38,23 @@ export default function AuthPage() {
   const [totpCode, setTotpCode] = useState("");
 
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
-  const [registerForm, setRegisterForm] = useState({ email: "", password: "", fullName: "" });
+  const [registerForm, setRegisterForm] = useState({ email: "", password: "", fullName: "", referralCode: "" });
+  const [activeTab, setActiveTab] = useState("login");
+  
+  const searchString = useSearch();
+  const refCodeFromUrl = new URLSearchParams(searchString).get("ref") || "";
+  
+  useEffect(() => {
+    if (refCodeFromUrl) {
+      setRegisterForm(prev => ({ ...prev, referralCode: refCodeFromUrl.toUpperCase() }));
+      setActiveTab("register");
+    }
+  }, [refCodeFromUrl]);
+  
+  const { data: referralValidation } = useQuery<{ valid: boolean; referrerName: string }>({
+    queryKey: ["/api/referrals/validate", registerForm.referralCode],
+    enabled: registerForm.referralCode.length >= 6,
+  });
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,8 +105,18 @@ export default function AuthPage() {
     setIsLoading(true);
 
     try {
-      await register(registerForm.email, registerForm.password, registerForm.fullName || undefined);
-      toast({ title: "Account created!", description: "Welcome to Work Digital." });
+      await register(
+        registerForm.email, 
+        registerForm.password, 
+        registerForm.fullName || undefined,
+        registerForm.referralCode || undefined
+      );
+      toast({ 
+        title: "Account created!", 
+        description: referralValidation?.valid 
+          ? "Welcome to Work Digital! Check your wallet for a referral bonus." 
+          : "Welcome to Work Digital." 
+      });
       setLocation("/dashboard");
     } catch (error) {
       toast({
@@ -307,7 +335,7 @@ export default function AuthPage() {
 
           <Card className="border-0 shadow-lg lg:shadow-xl">
             <CardContent className="p-6 lg:p-8">
-              <Tabs defaultValue="login" className="w-full">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
                 <TabsList className="grid w-full grid-cols-2 mb-6">
                   <TabsTrigger value="login" data-testid="tab-login">Sign in</TabsTrigger>
                   <TabsTrigger value="register" data-testid="tab-register">Create account</TabsTrigger>
@@ -460,6 +488,34 @@ export default function AuthPage() {
                       <p className="text-xs text-muted-foreground">
                         Must be at least 8 characters
                       </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="register-referral" className="flex items-center gap-2">
+                        <Gift className="h-4 w-4 text-primary" />
+                        Referral Code (Optional)
+                      </Label>
+                      <Input
+                        id="register-referral"
+                        type="text"
+                        placeholder="Enter referral code"
+                        value={registerForm.referralCode}
+                        onChange={(e) => setRegisterForm({ ...registerForm, referralCode: e.target.value.toUpperCase() })}
+                        className="h-11 uppercase"
+                        maxLength={8}
+                        data-testid="input-register-referral"
+                      />
+                      {registerForm.referralCode.length >= 6 && (
+                        <div className="text-xs">
+                          {referralValidation?.valid ? (
+                            <span className="text-green-600 dark:text-green-400 flex items-center gap-1">
+                              <CheckCircle2 className="h-3 w-3" />
+                              Referred by {referralValidation.referrerName}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">Validating code...</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <Button type="submit" className="w-full h-11" disabled={isLoading} data-testid="button-register">
                       {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
