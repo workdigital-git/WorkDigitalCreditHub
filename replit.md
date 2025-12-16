@@ -23,13 +23,14 @@ The user interface adheres to a Stripe-inspired minimal aesthetic, using the Int
 - **Wallet Management**: Manages user credit balances, transaction history, multiple payment methods, and auto-topup rules.
 - **App Integration**: Features an app registry with SSO capabilities (OAuth2/OpenID Connect + PKCE), allowing external applications to integrate for user authentication and credit operations.
 - **API Keys**: Supports both user-level API keys for programmatic access and app-level API keys for B2B integrations.
-- **Admin Panel**: Role-based administration for managing users, apps, and platform statistics.
+- **Admin Panel**: Role-based administration for managing users, apps, platform statistics, and referral program settings.
 - **Auto-Topup System**: Automatically funds user wallets when balances fall below a configured threshold, triggered by external debits.
 - **Audit Logging**: Comprehensive logging for financial transactions and authentication events, viewable by both users and administrators.
 - **Webhook Event System**: Handles payment status updates and other events with retry logic and status tracking.
 - **Background Job Processor**: Manages scheduled operations like auto-topup checks, webhook retries, and subscription billing.
 - **Subscription Billing System**: Supports recurring billing for app subscriptions with various cycles (monthly, yearly, per-use) and manages subscription statuses.
 - **SMS 2FA System**: Implements phone number verification and SMS-based 2FA using Plivo, with security features like E.164 formatting, rate limiting, and OTP expiration.
+- **Referral System**: User referral program with unique shareable codes, welcome bonuses for new users, referrer rewards when referred users fund above threshold, and admin-configurable settings (qualification threshold, bonus amounts, expiration days).
 
 ### Feature Specifications
 - JWT-based authentication with access/refresh tokens.
@@ -40,6 +41,7 @@ The user interface adheres to a Stripe-inspired minimal aesthetic, using the Int
 - API key generation for users and apps.
 - Role-based admin panel.
 - Dark/Light theme support and responsive design.
+- Referral program with shareable codes and configurable rewards.
 
 ### System Design Choices
 - **Backend**: Node.js with TypeScript, Express for HTTP API, Drizzle ORM with PostgreSQL. Utilizes JWT for auth, bcrypt for password hashing, and Zod for validation.

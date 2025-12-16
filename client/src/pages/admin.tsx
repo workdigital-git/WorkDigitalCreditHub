@@ -72,6 +72,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Gift,
+  Clock,
+  Settings,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
@@ -4218,6 +4221,323 @@ function EmailTestTab() {
   );
 }
 
+interface ReferralData {
+  id: string;
+  referrerId: string;
+  referredUserId: string;
+  referralCode: string;
+  status: string;
+  referredUserFundedCents: number;
+  qualificationThresholdCents: number;
+  referrerBonusCents: number;
+  referredBonusCents: number;
+  createdAt: string;
+  qualifiedAt: string | null;
+  referrerBonusPaidAt: string | null;
+  expiresAt: string | null;
+  referrerEmail: string;
+  referrerName: string;
+  referredUserEmail: string;
+  referredUserName: string;
+}
+
+interface ReferralSettings {
+  qualificationThresholdCents: number;
+  referrerBonusCents: number;
+  referredBonusCents: number;
+  expirationDays: number;
+  maxReferralsPerUser: number;
+  isActive: boolean;
+}
+
+function ReferralsTab() {
+  const { toast } = useToast();
+  const [showSettings, setShowSettings] = useState(false);
+
+  const { data: referrals, isLoading: referralsLoading } = useQuery<ReferralData[]>({
+    queryKey: ["/api/admin/referrals"],
+  });
+
+  const { data: settings, isLoading: settingsLoading } = useQuery<ReferralSettings>({
+    queryKey: ["/api/admin/referral-settings"],
+  });
+
+  const [settingsForm, setSettingsForm] = useState({
+    qualificationThresholdCents: 2000,
+    referrerBonusCents: 500,
+    referredBonusCents: 500,
+    expirationDays: 90,
+    maxReferralsPerUser: 100,
+    isActive: true,
+  });
+
+  const updateSettingsMutation = useMutation({
+    mutationFn: async (data: Partial<ReferralSettings>) => {
+      const res = await apiRequest("PATCH", "/api/admin/referral-settings", data);
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to update settings");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/referral-settings"] });
+      toast({ title: "Settings updated", description: "Referral settings have been saved." });
+      setShowSettings(false);
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to update settings", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const processReferralsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/referrals/process-qualified");
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || "Failed to process referrals");
+      }
+      return res.json() as Promise<{ processed: number; message: string }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/referrals"] });
+      toast({ title: "Referrals processed", description: `${data.processed} qualified referrals have been rewarded.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to process referrals", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const handleUpdateSettings = () => {
+    updateSettingsMutation.mutate({
+      qualificationThresholdCents: settingsForm.qualificationThresholdCents,
+      referrerBonusCents: settingsForm.referrerBonusCents,
+      referredBonusCents: settingsForm.referredBonusCents,
+      expirationDays: settingsForm.expirationDays,
+      maxReferralsPerUser: settingsForm.maxReferralsPerUser,
+      isActive: settingsForm.isActive,
+    });
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "PENDING":
+        return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" />Pending</Badge>;
+      case "QUALIFIED":
+        return <Badge variant="outline" className="bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"><CheckCircle className="h-3 w-3 mr-1" />Qualified</Badge>;
+      case "REWARDED":
+        return <Badge variant="outline" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"><Gift className="h-3 w-3 mr-1" />Rewarded</Badge>;
+      case "EXPIRED":
+        return <Badge variant="destructive">Expired</Badge>;
+      default:
+        return <Badge variant="secondary">{status}</Badge>;
+    }
+  };
+
+  const pendingCount = referrals?.filter(r => r.status === "PENDING").length || 0;
+  const qualifiedCount = referrals?.filter(r => r.status === "QUALIFIED").length || 0;
+  const rewardedCount = referrals?.filter(r => r.status === "REWARDED").length || 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Referral Management</h2>
+          <p className="text-sm text-muted-foreground">View all referrals and configure reward settings</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Dialog open={showSettings} onOpenChange={setShowSettings}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2" data-testid="button-referral-settings">
+                <Settings className="h-4 w-4" />
+                Settings
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Referral Settings</DialogTitle>
+                <DialogDescription>
+                  Configure the referral program rewards and rules
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Qualification Threshold (cents)</Label>
+                  <Input
+                    type="number"
+                    value={settings?.qualificationThresholdCents || settingsForm.qualificationThresholdCents}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, qualificationThresholdCents: parseInt(e.target.value) || 0 })}
+                    data-testid="input-qualification-threshold"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Amount in cents the referred user must fund to qualify (e.g., 2000 = $20.00)
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Referrer Bonus (cents)</Label>
+                  <Input
+                    type="number"
+                    value={settings?.referrerBonusCents || settingsForm.referrerBonusCents}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, referrerBonusCents: parseInt(e.target.value) || 0 })}
+                    data-testid="input-referrer-bonus"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Bonus given to the referrer when referral qualifies (e.g., 500 = $5.00)
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>New User Welcome Bonus (cents)</Label>
+                  <Input
+                    type="number"
+                    value={settings?.referredBonusCents || settingsForm.referredBonusCents}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, referredBonusCents: parseInt(e.target.value) || 0 })}
+                    data-testid="input-referred-bonus"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Instant bonus given to new user upon signup with referral code
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Expiration Days</Label>
+                  <Input
+                    type="number"
+                    value={settings?.expirationDays || settingsForm.expirationDays}
+                    onChange={(e) => setSettingsForm({ ...settingsForm, expirationDays: parseInt(e.target.value) || 90 })}
+                    data-testid="input-expiration-days"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Days until a pending referral expires
+                  </p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Program Active</Label>
+                    <p className="text-xs text-muted-foreground">Enable or disable the referral program</p>
+                  </div>
+                  <Switch
+                    checked={settings?.isActive ?? settingsForm.isActive}
+                    onCheckedChange={(checked) => setSettingsForm({ ...settingsForm, isActive: checked })}
+                    data-testid="switch-program-active"
+                  />
+                </div>
+                <Button 
+                  onClick={handleUpdateSettings} 
+                  className="w-full"
+                  disabled={updateSettingsMutation.isPending}
+                  data-testid="button-save-settings"
+                >
+                  {updateSettingsMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Settings
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+          {qualifiedCount > 0 && (
+            <Button 
+              onClick={() => processReferralsMutation.mutate()}
+              disabled={processReferralsMutation.isPending}
+              className="gap-2"
+              data-testid="button-process-referrals"
+            >
+              {processReferralsMutation.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Gift className="h-4 w-4" />
+              )}
+              Process {qualifiedCount} Qualified
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold" data-testid="stat-total-referrals">{referrals?.length || 0}</div>
+            <div className="text-sm text-muted-foreground">Total Referrals</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold" data-testid="stat-pending">{pendingCount}</div>
+            <div className="text-sm text-muted-foreground">Pending</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-yellow-600" data-testid="stat-qualified">{qualifiedCount}</div>
+            <div className="text-sm text-muted-foreground">Ready for Reward</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <div className="text-2xl font-bold text-green-600" data-testid="stat-rewarded">{rewardedCount}</div>
+            <div className="text-sm text-muted-foreground">Rewarded</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>All Referrals</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {referralsLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-16 w-full" />
+              ))}
+            </div>
+          ) : referrals && referrals.length > 0 ? (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Referrer</TableHead>
+                  <TableHead>Referred User</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Funded</TableHead>
+                  <TableHead>Bonus</TableHead>
+                  <TableHead>Created</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {referrals.map((referral) => (
+                  <TableRow key={referral.id} data-testid={`row-referral-${referral.id}`}>
+                    <TableCell>
+                      <div className="font-medium">{referral.referrerName}</div>
+                      <div className="text-xs text-muted-foreground">{referral.referrerEmail}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{referral.referredUserName}</div>
+                      <div className="text-xs text-muted-foreground">{referral.referredUserEmail}</div>
+                    </TableCell>
+                    <TableCell>{getStatusBadge(referral.status)}</TableCell>
+                    <TableCell>
+                      {formatCurrency(referral.referredUserFundedCents)} / {formatCurrency(referral.qualificationThresholdCents)}
+                    </TableCell>
+                    <TableCell>{formatCurrency(referral.referrerBonusCents)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(referral.createdAt).toLocaleDateString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Gift className="h-12 w-12 text-muted-foreground/50 mb-4" />
+              <h3 className="font-medium text-lg">No Referrals Yet</h3>
+              <p className="text-muted-foreground text-sm mt-1">
+                Referrals will appear here when users sign up with referral codes
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("users");
@@ -4279,6 +4599,10 @@ export default function AdminPage() {
               <Mail className="h-4 w-4" />
               Email
             </TabsTrigger>
+            <TabsTrigger value="referrals" className="gap-2" data-testid="tab-referrals">
+              <Gift className="h-4 w-4" />
+              Referrals
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="users">
@@ -4311,6 +4635,10 @@ export default function AdminPage() {
 
           <TabsContent value="email">
             <EmailTestTab />
+          </TabsContent>
+
+          <TabsContent value="referrals">
+            <ReferralsTab />
           </TabsContent>
         </Tabs>
       </div>
