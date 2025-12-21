@@ -22,6 +22,12 @@ import {
   oauthIdentities,
   referrals,
   referralSettings,
+  stripeCustomers,
+  creditPacks,
+  walletLedger,
+  autopaySettings,
+  autopayAttempts,
+  checkoutSessions,
   type User,
   type InsertUser,
   type Wallet,
@@ -67,6 +73,18 @@ import {
   type InsertReferral,
   type ReferralSettings,
   type InsertReferralSettings,
+  type StripeCustomer,
+  type InsertStripeCustomer,
+  type CreditPack,
+  type InsertCreditPack,
+  type WalletLedger,
+  type InsertWalletLedger,
+  type AutopaySettings,
+  type InsertAutopaySettings,
+  type AutopayAttempt,
+  type InsertAutopayAttempt,
+  type CheckoutSession,
+  type InsertCheckoutSession,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -221,6 +239,41 @@ export interface IStorage {
   updateReferralFundedAmount(referredUserId: string, amountCents: number): Promise<void>;
   getReferralStats(userId: string): Promise<{ totalReferrals: number; qualifiedReferrals: number; pendingReferrals: number; totalEarnings: number }>;
   getAllReferrals(limit?: number): Promise<(Referral & { referrer: User; referredUser: User })[]>;
+
+  // Stripe Customers
+  getStripeCustomer(userId: string): Promise<StripeCustomer | undefined>;
+  getStripeCustomerByStripeId(stripeCustomerId: string): Promise<StripeCustomer | undefined>;
+  createStripeCustomer(customer: InsertStripeCustomer): Promise<StripeCustomer>;
+  updateStripeCustomer(userId: string, data: Partial<StripeCustomer>): Promise<StripeCustomer | undefined>;
+
+  // Credit Packs
+  getCreditPacks(): Promise<CreditPack[]>;
+  getActiveCreditPacks(): Promise<CreditPack[]>;
+  getCreditPackBySku(sku: string): Promise<CreditPack | undefined>;
+  createCreditPack(pack: InsertCreditPack): Promise<CreditPack>;
+  updateCreditPack(id: string, data: Partial<CreditPack>): Promise<CreditPack | undefined>;
+
+  // Wallet Ledger
+  getLedgerEntriesByUserId(userId: string, limit?: number): Promise<WalletLedger[]>;
+  getLedgerEntryByIdempotencyKey(key: string): Promise<WalletLedger | undefined>;
+  createLedgerEntry(entry: InsertWalletLedger): Promise<WalletLedger>;
+  getUserCreditBalance(userId: string): Promise<number>;
+
+  // Autopay Settings
+  getAutopaySettings(userId: string): Promise<AutopaySettings | undefined>;
+  createAutopaySettings(settings: InsertAutopaySettings): Promise<AutopaySettings>;
+  updateAutopaySettings(userId: string, data: Partial<AutopaySettings>): Promise<AutopaySettings | undefined>;
+
+  // Autopay Attempts
+  createAutopayAttempt(attempt: InsertAutopayAttempt): Promise<AutopayAttempt>;
+  updateAutopayAttempt(id: string, data: Partial<AutopayAttempt>): Promise<AutopayAttempt | undefined>;
+  getAutopayAttemptsByUserId(userId: string, limit?: number): Promise<AutopayAttempt[]>;
+  countRecentAutopayAttempts(userId: string, since: Date): Promise<number>;
+
+  // Checkout Sessions
+  createCheckoutSession(session: InsertCheckoutSession): Promise<CheckoutSession>;
+  getCheckoutSessionByStripeId(stripeSessionId: string): Promise<CheckoutSession | undefined>;
+  updateCheckoutSession(id: string, data: Partial<CheckoutSession>): Promise<CheckoutSession | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1318,6 +1371,153 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return result;
+  }
+
+  // Stripe Customers
+  async getStripeCustomer(userId: string): Promise<StripeCustomer | undefined> {
+    const [customer] = await db.select().from(stripeCustomers).where(eq(stripeCustomers.userId, userId));
+    return customer || undefined;
+  }
+
+  async getStripeCustomerByStripeId(stripeCustomerId: string): Promise<StripeCustomer | undefined> {
+    const [customer] = await db.select().from(stripeCustomers).where(eq(stripeCustomers.stripeCustomerId, stripeCustomerId));
+    return customer || undefined;
+  }
+
+  async createStripeCustomer(customer: InsertStripeCustomer): Promise<StripeCustomer> {
+    const [created] = await db.insert(stripeCustomers).values(customer).returning();
+    return created;
+  }
+
+  async updateStripeCustomer(userId: string, data: Partial<StripeCustomer>): Promise<StripeCustomer | undefined> {
+    const [updated] = await db
+      .update(stripeCustomers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(stripeCustomers.userId, userId))
+      .returning();
+    return updated || undefined;
+  }
+
+  // Credit Packs
+  async getCreditPacks(): Promise<CreditPack[]> {
+    return db.select().from(creditPacks).orderBy(creditPacks.displayOrder);
+  }
+
+  async getActiveCreditPacks(): Promise<CreditPack[]> {
+    return db.select().from(creditPacks).where(eq(creditPacks.isActive, true)).orderBy(creditPacks.displayOrder);
+  }
+
+  async getCreditPackBySku(sku: string): Promise<CreditPack | undefined> {
+    const [pack] = await db.select().from(creditPacks).where(eq(creditPacks.sku, sku));
+    return pack || undefined;
+  }
+
+  async createCreditPack(pack: InsertCreditPack): Promise<CreditPack> {
+    const [created] = await db.insert(creditPacks).values(pack).returning();
+    return created;
+  }
+
+  async updateCreditPack(id: string, data: Partial<CreditPack>): Promise<CreditPack | undefined> {
+    const [updated] = await db
+      .update(creditPacks)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(creditPacks.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  // Wallet Ledger
+  async getLedgerEntriesByUserId(userId: string, limit?: number): Promise<WalletLedger[]> {
+    return db.select().from(walletLedger).where(eq(walletLedger.userId, userId)).orderBy(desc(walletLedger.createdAt)).limit(limit || 100);
+  }
+
+  async getLedgerEntryByIdempotencyKey(key: string): Promise<WalletLedger | undefined> {
+    const [entry] = await db.select().from(walletLedger).where(eq(walletLedger.idempotencyKey, key));
+    return entry || undefined;
+  }
+
+  async createLedgerEntry(entry: InsertWalletLedger): Promise<WalletLedger> {
+    const [created] = await db.insert(walletLedger).values(entry).returning();
+    return created;
+  }
+
+  async getUserCreditBalance(userId: string): Promise<number> {
+    const result = await db
+      .select({ totalCredits: sql<number>`COALESCE(SUM(${walletLedger.creditsDelta}), 0)` })
+      .from(walletLedger)
+      .where(eq(walletLedger.userId, userId));
+    return Number(result[0]?.totalCredits || 0);
+  }
+
+  // Autopay Settings
+  async getAutopaySettings(userId: string): Promise<AutopaySettings | undefined> {
+    const [settings] = await db.select().from(autopaySettings).where(eq(autopaySettings.userId, userId));
+    return settings || undefined;
+  }
+
+  async createAutopaySettings(settings: InsertAutopaySettings): Promise<AutopaySettings> {
+    const [created] = await db.insert(autopaySettings).values(settings).returning();
+    return created;
+  }
+
+  async updateAutopaySettings(userId: string, data: Partial<AutopaySettings>): Promise<AutopaySettings | undefined> {
+    const [updated] = await db
+      .update(autopaySettings)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(autopaySettings.userId, userId))
+      .returning();
+    return updated || undefined;
+  }
+
+  // Autopay Attempts
+  async createAutopayAttempt(attempt: InsertAutopayAttempt): Promise<AutopayAttempt> {
+    const [created] = await db.insert(autopayAttempts).values(attempt).returning();
+    return created;
+  }
+
+  async updateAutopayAttempt(id: string, data: Partial<AutopayAttempt>): Promise<AutopayAttempt | undefined> {
+    const [updated] = await db
+      .update(autopayAttempts)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(autopayAttempts.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async getAutopayAttemptsByUserId(userId: string, limit?: number): Promise<AutopayAttempt[]> {
+    return db.select().from(autopayAttempts).where(eq(autopayAttempts.userId, userId)).orderBy(desc(autopayAttempts.createdAt)).limit(limit || 20);
+  }
+
+  async countRecentAutopayAttempts(userId: string, since: Date): Promise<number> {
+    const result = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(autopayAttempts)
+      .where(and(
+        eq(autopayAttempts.userId, userId),
+        eq(autopayAttempts.status, 'SUCCEEDED'),
+        sql`${autopayAttempts.createdAt} >= ${since}`
+      ));
+    return Number(result[0]?.count || 0);
+  }
+
+  // Checkout Sessions
+  async createCheckoutSession(session: InsertCheckoutSession): Promise<CheckoutSession> {
+    const [created] = await db.insert(checkoutSessions).values(session).returning();
+    return created;
+  }
+
+  async getCheckoutSessionByStripeId(stripeSessionId: string): Promise<CheckoutSession | undefined> {
+    const [session] = await db.select().from(checkoutSessions).where(eq(checkoutSessions.stripeSessionId, stripeSessionId));
+    return session || undefined;
+  }
+
+  async updateCheckoutSession(id: string, data: Partial<CheckoutSession>): Promise<CheckoutSession | undefined> {
+    const [updated] = await db
+      .update(checkoutSessions)
+      .set(data)
+      .where(eq(checkoutSessions.id, id))
+      .returning();
+    return updated || undefined;
   }
 }
 

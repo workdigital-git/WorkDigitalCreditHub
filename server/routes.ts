@@ -391,6 +391,218 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   const { setupReplitAuth } = await import("./replitAuth");
   await setupReplitAuth(app);
 
+  // =====================
+  // STRIPE WEBHOOK HANDLER (needs raw body)
+  // =====================
+  app.post("/api/webhooks/stripe", async (req, res) => {
+    try {
+      const signature = req.headers["stripe-signature"] as string;
+      if (!signature) {
+        console.log("Stripe webhook: Missing signature header");
+        return res.status(400).json({ error: "Missing stripe-signature header" });
+      }
+
+      // Get the raw body from Express
+      const rawBody = (req as any).rawBody || JSON.stringify(req.body);
+
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      let event: any;
+
+      if (webhookSecret) {
+        // Verify signature in production
+        const { verifyWebhookSignature } = await import("./payments/stripe-service");
+        const verifiedEvent = await verifyWebhookSignature(rawBody, signature, webhookSecret);
+        if (!verifiedEvent) {
+          console.log("Stripe webhook: Invalid signature");
+          return res.status(400).json({ error: "Invalid signature" });
+        }
+        event = verifiedEvent;
+      } else {
+        // Development mode - accept unverified events (Stripe testing)
+        console.log("Stripe webhook: Running in development mode without signature verification");
+        event = req.body;
+      }
+
+      console.log(`Stripe webhook received: ${event.type} (ID: ${event.id})`);
+
+      // Handle the event
+      if (event.type === "checkout.session.completed") {
+        await handleCheckoutSessionCompleted(event);
+      } else if (event.type === "payment_intent.succeeded") {
+        await handlePaymentIntentSucceeded(event);
+      } else if (event.type === "setup_intent.succeeded") {
+        await handleSetupIntentSucceeded(event);
+      } else {
+        console.log(`Stripe webhook: Unhandled event type: ${event.type}`);
+      }
+
+      res.json({ received: true });
+    } catch (error) {
+      console.error("Stripe webhook error:", error);
+      res.status(500).json({ error: "Webhook handler failed" });
+    }
+  });
+
+  // Stripe webhook event handlers
+  async function handleCheckoutSessionCompleted(event: any) {
+    const session = event.data.object;
+    const idempotencyKey = `stripe_event_${event.id}`;
+
+    // Check for duplicate processing
+    const existingEntry = await storage.getLedgerEntryByIdempotencyKey(idempotencyKey);
+    if (existingEntry) {
+      console.log(`Stripe webhook: Duplicate event ${event.id}, already processed`);
+      return;
+    }
+
+    const userId = session.metadata?.userId;
+    const packSku = session.metadata?.packSku;
+    const creditsAmount = parseInt(session.metadata?.creditsAmount || "0", 10);
+    const amountCents = session.amount_total || 0;
+
+    if (!userId || !creditsAmount) {
+      console.log("Stripe webhook: Missing userId or creditsAmount in checkout session metadata");
+      return;
+    }
+
+    // Get or create wallet
+    let wallet = await storage.getWalletByUserId(userId);
+    if (!wallet) {
+      wallet = await storage.createWallet({ userId, currency: "USD", balanceCents: 0 });
+    }
+
+    // Create ledger entry (append-only for idempotency)
+    await storage.createLedgerEntry({
+      userId,
+      type: "CREDITS_GRANTED",
+      creditsDelta: creditsAmount,
+      amountCents,
+      idempotencyKey,
+      stripePaymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
+      stripeCheckoutSessionId: session.id,
+      packSku: packSku || null,
+      metadata: { description: `Purchased ${creditsAmount} credits via Stripe Checkout` },
+    });
+
+    // Update legacy wallet balance (for backwards compatibility)
+    await storage.updateWallet(wallet.id, {
+      balanceCents: wallet.balanceCents + amountCents,
+    });
+
+    // Update checkout session status
+    const checkoutSession = await storage.getCheckoutSessionByStripeId(session.id);
+    if (checkoutSession) {
+      await storage.updateCheckoutSession(checkoutSession.id, { 
+        status: "completed",
+        completedAt: new Date(),
+      });
+    }
+
+    // Create transaction record
+    await storage.createTransaction({
+      walletId: wallet.id,
+      type: "CREDIT",
+      source: "USER_DEPOSIT",
+      amountCents,
+      description: `Credit pack purchase: ${creditsAmount} credits`,
+      status: "COMPLETED",
+      externalRef: session.id,
+      paymentGateway: "STRIPE",
+      appId: null,
+    });
+
+    console.log(`Stripe webhook: Granted ${creditsAmount} credits to user ${userId} (session ${session.id})`);
+  }
+
+  async function handlePaymentIntentSucceeded(event: any) {
+    const paymentIntent = event.data.object;
+    const idempotencyKey = `stripe_pi_${paymentIntent.id}`;
+
+    // Check if this is for auto-topup
+    if (paymentIntent.metadata?.type !== "auto_topup") {
+      // Not an auto-topup, might be handled by checkout.session.completed
+      return;
+    }
+
+    // Check for duplicate processing
+    const existingEntry = await storage.getLedgerEntryByIdempotencyKey(idempotencyKey);
+    if (existingEntry) {
+      console.log(`Stripe webhook: Duplicate payment intent ${paymentIntent.id}, already processed`);
+      return;
+    }
+
+    const userId = paymentIntent.metadata?.userId;
+    const creditsAmount = parseInt(paymentIntent.metadata?.creditsAmount || "0", 10);
+    const packSku = paymentIntent.metadata?.packSku;
+
+    if (!userId || !creditsAmount) {
+      console.log("Stripe webhook: Missing userId or creditsAmount in payment intent metadata");
+      return;
+    }
+
+    // Get or create wallet
+    let wallet = await storage.getWalletByUserId(userId);
+    if (!wallet) {
+      wallet = await storage.createWallet({ userId, currency: "USD", balanceCents: 0 });
+    }
+
+    // Create ledger entry
+    await storage.createLedgerEntry({
+      userId,
+      type: "AUTOPAY_TOPUP_SUCCEEDED",
+      creditsDelta: creditsAmount,
+      amountCents: paymentIntent.amount,
+      idempotencyKey,
+      stripePaymentIntentId: paymentIntent.id,
+      packSku: packSku || null,
+      metadata: { description: `Auto top-up: ${creditsAmount} credits` },
+    });
+
+    // Update legacy wallet balance
+    await storage.updateWallet(wallet.id, {
+      balanceCents: wallet.balanceCents + paymentIntent.amount,
+    });
+
+    console.log(`Stripe webhook: Auto-topup granted ${creditsAmount} credits to user ${userId}`);
+  }
+
+  async function handleSetupIntentSucceeded(event: any) {
+    const setupIntent = event.data.object;
+    const userId = setupIntent.metadata?.userId;
+    const customerId = setupIntent.customer;
+
+    if (!userId || !customerId) {
+      console.log("Stripe webhook: Missing userId or customerId in setup intent");
+      return;
+    }
+
+    // Update Stripe customer with default payment method
+    const paymentMethodId = setupIntent.payment_method;
+    if (paymentMethodId && typeof paymentMethodId === "string") {
+      const stripeCustomer = await storage.getStripeCustomer(userId);
+      if (stripeCustomer) {
+        await storage.updateStripeCustomer(userId, {
+          defaultPaymentMethodId: paymentMethodId,
+        });
+
+        // Also set as default in Stripe
+        try {
+          const { getStripeClient } = await import("./payments/stripe-service");
+          const stripe = await getStripeClient();
+          if (stripe) {
+            await stripe.customers.update(customerId, {
+              invoice_settings: { default_payment_method: paymentMethodId },
+            });
+          }
+        } catch (error) {
+          console.error("Failed to set default payment method in Stripe:", error);
+        }
+      }
+    }
+
+    console.log(`Stripe webhook: Setup intent succeeded for user ${userId}, payment method ${paymentMethodId}`);
+  }
+
   app.post("/api/auth/register", async (req, res) => {
     try {
       const validation = insertUserSchema.safeParse(req.body);
@@ -1508,6 +1720,287 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("Initiate payment error:", error);
       res.status(500).json({ message: "Failed to initiate payment" });
+    }
+  });
+
+  // =====================
+  // BILLING / CREDIT PACKS ROUTES
+  // =====================
+
+  // Get available credit packs
+  app.get("/api/billing/packs", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const packs = await storage.getActiveCreditPacks();
+      res.json(packs);
+    } catch (error) {
+      console.error("Get credit packs error:", error);
+      res.status(500).json({ message: "Failed to get credit packs" });
+    }
+  });
+
+  // Create Stripe Checkout session for credit pack purchase
+  app.post("/api/billing/checkout-session", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { packSku, customAmount } = req.body;
+      const userId = req.user!.id;
+
+      let pack;
+      let priceCents: number;
+      let creditsAmount: number;
+      let packName: string;
+
+      if (packSku) {
+        pack = await storage.getCreditPackBySku(packSku);
+        if (!pack || !pack.isActive) {
+          return res.status(400).json({ message: "Invalid or inactive credit pack" });
+        }
+        priceCents = pack.priceCents;
+        creditsAmount = pack.creditsAmount;
+        packName = pack.displayName;
+      } else if (customAmount && customAmount >= 5) {
+        priceCents = Math.round(customAmount * 100);
+        creditsAmount = customAmount;
+        packName = `${customAmount} Credits`;
+      } else {
+        return res.status(400).json({ message: "Please provide a pack SKU or custom amount (min $5)" });
+      }
+
+      // Ensure user has a Stripe customer
+      let stripeCustomer = await storage.getStripeCustomer(userId);
+      if (!stripeCustomer) {
+        const user = await storage.getUser(userId);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const { createStripeCustomer } = await import("./payments/stripe-service");
+        const result = await createStripeCustomer(user.email, user.fullName || undefined, { userId });
+        if (!result.success || !result.customerId) {
+          return res.status(500).json({ message: "Failed to create payment profile" });
+        }
+
+        stripeCustomer = await storage.createStripeCustomer({
+          userId,
+          stripeCustomerId: result.customerId,
+        });
+      }
+
+      // Get wallet
+      let wallet = await storage.getWalletByUserId(userId);
+      if (!wallet) {
+        wallet = await storage.createWallet({ userId, currency: "USD", balanceCents: 0 });
+      }
+
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const successUrl = `${baseUrl}/wallet?payment=success&session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${baseUrl}/wallet?payment=cancelled`;
+
+      const { createCreditPackCheckoutSession } = await import("./payments/stripe-service");
+      const session = await createCreditPackCheckoutSession({
+        customerId: stripeCustomer.stripeCustomerId,
+        packSku: packSku || `custom_${customAmount}`,
+        packName,
+        priceCents,
+        creditsAmount,
+        userId,
+        successUrl,
+        cancelUrl,
+      });
+
+      // Store checkout session in database
+      const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
+      await storage.createCheckoutSession({
+        userId,
+        stripeSessionId: session.sessionId,
+        packSku: packSku || null,
+        amountCents: priceCents,
+        creditsAmount,
+        status: "pending",
+        expiresAt,
+      });
+
+      await createAuditLog(
+        req,
+        "CHECKOUT_INITIATED",
+        `Checkout session created for ${packName}`,
+        userId,
+        "checkout_session",
+        session.sessionId,
+        { priceCents, creditsAmount, packSku }
+      );
+
+      res.json({ url: session.url, sessionId: session.sessionId });
+    } catch (error) {
+      console.error("Create checkout session error:", error);
+      res.status(500).json({ message: "Failed to create checkout session" });
+    }
+  });
+
+  // Get Stripe publishable key
+  app.get("/api/billing/config", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { getStripePublishableKey, isStripeConfigured } = await import("./payments/stripe-service");
+      const configured = await isStripeConfigured();
+      const publishableKey = configured ? await getStripePublishableKey() : null;
+
+      res.json({
+        stripeConfigured: configured,
+        publishableKey,
+      });
+    } catch (error) {
+      console.error("Get billing config error:", error);
+      res.status(500).json({ message: "Failed to get billing configuration" });
+    }
+  });
+
+  // Create SetupIntent for saving payment method
+  app.post("/api/billing/setup-intent", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+
+      // Ensure user has a Stripe customer
+      let stripeCustomer = await storage.getStripeCustomer(userId);
+      if (!stripeCustomer) {
+        const user = await storage.getUser(userId);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const { createStripeCustomer } = await import("./payments/stripe-service");
+        const result = await createStripeCustomer(user.email, user.fullName || undefined, { userId });
+        if (!result.success || !result.customerId) {
+          return res.status(500).json({ message: "Failed to create payment profile" });
+        }
+
+        stripeCustomer = await storage.createStripeCustomer({
+          userId,
+          stripeCustomerId: result.customerId,
+        });
+      }
+
+      const { createSetupIntent, getStripePublishableKey } = await import("./payments/stripe-service");
+      const setupIntent = await createSetupIntent(stripeCustomer.stripeCustomerId, { userId });
+      const publishableKey = await getStripePublishableKey();
+
+      res.json({
+        clientSecret: setupIntent.clientSecret,
+        publishableKey,
+      });
+    } catch (error) {
+      console.error("Create SetupIntent error:", error);
+      res.status(500).json({ message: "Failed to create setup intent" });
+    }
+  });
+
+  // Get saved payment method info
+  app.get("/api/billing/payment-method", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const stripeCustomer = await storage.getStripeCustomer(userId);
+
+      if (!stripeCustomer) {
+        return res.json({ hasPaymentMethod: false });
+      }
+
+      const { getCustomerPaymentMethod } = await import("./payments/stripe-service");
+      const pmInfo = await getCustomerPaymentMethod(stripeCustomer.stripeCustomerId);
+
+      res.json(pmInfo || { hasPaymentMethod: false });
+    } catch (error) {
+      console.error("Get payment method error:", error);
+      res.status(500).json({ message: "Failed to get payment method" });
+    }
+  });
+
+  // Get/Update autopay settings
+  app.get("/api/billing/autopay-settings", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      let settings = await storage.getAutopaySettings(userId);
+
+      if (!settings) {
+        // Return default settings
+        res.json({
+          enabled: false,
+          thresholdCredits: 10,
+          topupPackSku: null,
+          maxTopupsPerDay: 2,
+          maxTopupsPerWeek: 6,
+          cooldownMinutes: 30,
+        });
+      } else {
+        res.json(settings);
+      }
+    } catch (error) {
+      console.error("Get autopay settings error:", error);
+      res.status(500).json({ message: "Failed to get autopay settings" });
+    }
+  });
+
+  app.patch("/api/billing/autopay-settings", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { enabled, thresholdCredits, topupPackSku, paymentMethodId, maxTopupsPerDay, maxTopupsPerWeek, cooldownMinutes } = req.body;
+
+      // Validate pack exists if provided
+      if (topupPackSku) {
+        const pack = await storage.getCreditPackBySku(topupPackSku);
+        if (!pack || !pack.isActive) {
+          return res.status(400).json({ message: "Invalid credit pack" });
+        }
+      }
+
+      let settings = await storage.getAutopaySettings(userId);
+
+      if (!settings) {
+        settings = await storage.createAutopaySettings({
+          userId,
+          enabled: enabled ?? false,
+          thresholdCredits: thresholdCredits ?? 10,
+          topupPackSku: topupPackSku ?? null,
+          paymentMethodId: paymentMethodId ?? null,
+          maxTopupsPerDay: maxTopupsPerDay ?? 2,
+          maxTopupsPerWeek: maxTopupsPerWeek ?? 6,
+          cooldownMinutes: cooldownMinutes ?? 30,
+        });
+      } else {
+        settings = await storage.updateAutopaySettings(userId, {
+          enabled,
+          thresholdCredits,
+          topupPackSku,
+          paymentMethodId,
+          maxTopupsPerDay,
+          maxTopupsPerWeek,
+          cooldownMinutes,
+        }) || settings;
+      }
+
+      await createAuditLog(
+        req,
+        "AUTOPAY_SETTINGS_UPDATED",
+        `Auto-topup settings ${enabled ? "enabled" : "disabled"}`,
+        userId,
+        "autopay_settings",
+        settings.id,
+        { enabled, thresholdCredits, topupPackSku }
+      );
+
+      res.json(settings);
+    } catch (error) {
+      console.error("Update autopay settings error:", error);
+      res.status(500).json({ message: "Failed to update autopay settings" });
+    }
+  });
+
+  // Get user's credit balance from ledger
+  app.get("/api/billing/credits", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const creditBalance = await storage.getUserCreditBalance(userId);
+      res.json({ credits: creditBalance });
+    } catch (error) {
+      console.error("Get credit balance error:", error);
+      res.status(500).json({ message: "Failed to get credit balance" });
     }
   });
 

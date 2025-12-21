@@ -1,0 +1,288 @@
+You are implementing Payments + Wallet Funding + Auto-Top-Up for Credits Hub using Stripe.
+
+GOALS
+1) Add multiple payment options via Stripe Checkout:
+   - Cards + Apple Pay + Google Pay (via Checkout)
+2) Support saved payment method for future off-session charges:
+   - Create Stripe Customer per user
+   - Collect PM via SetupIntent (or Checkout in setup mode)
+3) Implement wallet funding and credit granting:
+   - Users buy “Credit Packs” (e.g., $25 = 25 credits) or “Custom Amount”
+   - Credits are granted ONLY after Stripe webhook confirms success
+4) Implement Auto-Top-Up:
+   - If credits drop below threshold, automatically charge user off-session for a preset top-up amount
+   - Enforce caps + cooldowns
+5) Implement ledger + idempotency:
+   - Never set balances directly; append ledger events
+   - Ensure webhook retries and double events do not create duplicate credits
+
+CONSTRAINTS
+- Keep all money/credit granting decisions webhook-driven.
+- Prevent duplicate grants with idempotency keys (Stripe event id + purpose).
+- No “guaranteed” language in UI. Show clear receipts and safety controls.
+- This is a Credits Hub feature (wallet + credits). Do not mix with “Forge” execution logic.
+
+TECH STACK ASSUMPTION
+- Node/Express backend
+- Postgres via Drizzle ORM
+- Frontend React
+(If your Credits Hub is separate from Forge, apply these changes to the Credits Hub repo. If it shares infra, isolate under /api/billing and /api/wallet.)
+
+--------------------------------------------------------------------
+A) DATABASE SCHEMA (SERVER-SIDE; DRIZZLE)
+
+Create new tables:
+
+1) stripe_customers
+- id (uuid pk)
+- userId (unique)
+- stripeCustomerId (unique)
+- createdAt, updatedAt
+
+2) wallet_ledger
+- id (uuid pk)
+- userId
+- orgId nullable
+- type enum:
+  - wallet_topup_pending
+  - wallet_topup_succeeded
+  - wallet_topup_failed
+  - credits_granted
+  - credits_spent
+  - credits_revoked
+  - autopay_topup_succeeded
+  - autopay_topup_failed
+- amountCents (int nullable)   // money amount for topups
+- creditsDelta (int default 0) // positive for grant, negative for spend
+- currency (string default 'usd')
+- stripeEventId (string nullable)
+- stripePaymentIntentId (string nullable)
+- stripeCheckoutSessionId (string nullable)
+- idempotencyKey (string unique) // critical!
+- metadata jsonb nullable
+- createdAt
+
+3) credit_balances (optional cache)
+- userId (pk)
+- creditsBalance (int)
+- updatedAt
+NOTE: If you already have a balance system, keep it; just ensure all updates are derived from ledger events transactionally.
+
+4) credit_packs
+- id (uuid pk)
+- sku (unique string) e.g. "credits_25"
+- displayName (string) e.g. "25 Credits"
+- priceCents (int) e.g. 2500
+- creditsAmount (int) e.g. 25
+- isActive (boolean)
+- createdAt, updatedAt
+
+Seed packs:
+- 25 credits / $25
+- 50 credits / $50
+- 100 credits / $100
+(Choose your pricing; keep simple.)
+
+5) autopay_settings
+- id (uuid pk)
+- userId (unique)
+- enabled (boolean default false)
+- thresholdCredits (int default 10)          // when below this, trigger
+- topupPackSku (string)                      // which pack to buy
+- maxTopupsPerDay (int default 2)
+- maxTopupsPerWeek (int default 6)
+- cooldownMinutes (int default 30)
+- lastTopupAt (timestamp nullable)
+- createdAt, updatedAt
+
+6) autopay_attempts
+- id (uuid pk)
+- userId
+- triggeredByLedgerId (uuid nullable)        // the spend that triggered
+- status enum: queued | succeeded | failed | cancelled
+- stripePaymentIntentId (string nullable)
+- failureCode (string nullable)
+- failureMessage (string nullable)
+- createdAt, updatedAt
+
+--------------------------------------------------------------------
+B) STRIPE CONFIG + WEBHOOKS
+
+Add environment vars:
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- STRIPE_PUBLISHABLE_KEY
+- APP_BASE_URL
+
+IMPORTANT:
+- Implement webhook endpoint with raw body parsing (Stripe requires raw).
+- Use Stripe event.id as idempotency base.
+
+Webhook events to handle:
+1) checkout.session.completed
+2) payment_intent.succeeded
+3) payment_intent.payment_failed
+4) charge.refunded (optional)
+5) charge.dispute.created (optional)
+
+Primary grant should occur on a single event path to avoid double-grant:
+- Preferred: handle checkout.session.completed and read session.payment_intent
+
+Idempotency:
+- For each successful top-up, create ledger row with idempotencyKey:
+  "stripe_event:{event.id}:topup"
+- For credits grant:
+  "stripe_event:{event.id}:credits_grant:{packSku}"
+
+Do everything in a DB transaction:
+- Insert ledger “wallet_topup_succeeded”
+- Insert ledger “credits_granted”
+- Update cached credit balance if you maintain one
+
+Never grant credits in the client.
+
+--------------------------------------------------------------------
+C) PAYMENT FLOWS
+
+1) CREDIT PACK PURCHASE (STRIPE CHECKOUT)
+Endpoints:
+
+GET /api/billing/packs
+- returns active packs
+
+POST /api/billing/checkout-session
+Body: { packSku: "credits_50" }
+Behavior:
+- Ensure Stripe Customer exists for user (create if needed)
+- Create Stripe Checkout Session:
+  - mode: "payment"
+  - customer: stripeCustomerId
+  - line_items with pack price
+  - allow_promotion_codes: optional
+  - success_url: APP_BASE_URL + "/wallet/success?session_id={CHECKOUT_SESSION_ID}"
+  - cancel_url: APP_BASE_URL + "/wallet"
+  - payment_method_types: leave blank (Stripe auto) OR specify ["card"] and let wallets appear
+  - set customer_update if desired
+Return: { url } for redirect.
+
+2) SAVED PAYMENT METHOD SETUP (FOR AUTO-TOP-UP)
+We need a payment method on file for off-session charges.
+
+Option A (recommended): SetupIntent + PaymentElement UI
+Endpoints:
+POST /api/billing/setup-intent
+- ensures stripe customer exists
+- creates setupIntent with customer, payment_method_types ["card"]
+Return client_secret + publishable_key
+
+Frontend: collect PM, confirm setup, then show “Payment method saved.”
+
+Option B: Checkout Session in "setup" mode (if you prefer)
+(mode: "setup") with customer.
+
+Store:
+- stripeCustomerId already in stripe_customers
+- default payment method can be retrieved from Stripe customer or attached PM id (store PM id if you want).
+
+3) AUTO-TOP-UP TRIGGER
+When credits are spent, check if balance dips below threshold, then queue auto-top-up.
+
+Implement in the credits debit path:
+- Wherever you “burn credits,” after successful debit transaction:
+  - compute new creditsBalance
+  - if autopay enabled and creditsBalance < threshold:
+    - enforce cooldown + caps:
+      - cooldownMinutes since lastTopupAt
+      - count succeeded topups in last 24h / 7d from wallet_ledger
+    - if allowed: create autopay_attempt row queued and kick off charge
+
+Charge method:
+- Create Stripe PaymentIntent:
+  - customer: stripeCustomerId
+  - amount: pack.priceCents
+  - currency: 'usd'
+  - off_session: true
+  - confirm: true
+  - payment_method: default customer PM (retrieve from Stripe)
+  - description: "Credits Hub Auto Top-Up: {packSku}"
+- Use Stripe idempotency key:
+  "autotopup:{userId}:{YYYYMMDD}:{packSku}:{n}" (or based on attempt id)
+On success:
+- ledger autopay_topup_succeeded
+- ledger credits_granted
+- update lastTopupAt
+On failure:
+- ledger autopay_topup_failed (no credits)
+- save failure code/message in autopay_attempt
+- optionally disable autopay if repeated failures (e.g., 3 failures)
+
+IMPORTANT: Auto-top-up should be best-effort and never block the primary user action. If it fails, user continues but sees banner: “Auto-top-up failed—add funds.”
+
+--------------------------------------------------------------------
+D) FRONTEND UI
+
+Add pages:
+
+1) /wallet
+- Show current credits balance
+- Show available packs with “Buy” buttons
+- Show “Payment method” section:
+  - if no saved PM: “Add payment method”
+  - if saved: show masked brand/last4 if available (fetch from /api/billing/payment-method)
+- Show Auto-Top-Up settings summary
+
+2) /wallet/success
+- Accept session_id; call backend to verify session status (optional)
+- Show “Top-up processing…” then “Credits added.”
+
+3) Auto-Top-Up Settings Panel
+- Toggle enabled
+- Threshold credits
+- Pack selector (from packs)
+- Caps: max/day, max/week
+- Cooldown minutes
+- Save button -> PATCH /api/billing/autopay-settings
+
+Endpoints:
+GET /api/billing/autopay-settings
+PATCH /api/billing/autopay-settings
+
+Also add:
+GET /api/billing/payment-method
+- returns whether a PM is saved and basic mask info (brand, last4, exp).
+
+--------------------------------------------------------------------
+E) SECURITY + COMPLIANCE GUARDRAILS
+
+- Webhook endpoint must verify Stripe signature.
+- Always use server-side credit granting.
+- Store only non-sensitive payment metadata (brand/last4), never PAN.
+- Require auth on all billing endpoints except webhook.
+- Use explicit user confirmation UI for enabling auto-top-up.
+
+--------------------------------------------------------------------
+F) TEST MODE TO LIVE MODE CHECKLIST (IMPLEMENT AS DOC)
+
+Create docs/payments/stripe-go-live.md with:
+- Add live keys in env
+- Create live webhook endpoint + set STRIPE_WEBHOOK_SECRET
+- Confirm success/cancel URLs
+- Enable Apple Pay/Google Pay (automatic via Checkout when domain verified)
+- Verify customer + setupIntent flow works in live
+- Run a live $1 test pack and confirm ledger integrity
+- Confirm dispute/refund/chargeback behavior (optional)
+
+--------------------------------------------------------------------
+G) ACCEPTANCE CRITERIA
+
+1) User can buy a credit pack via Stripe Checkout and see credits added after webhook success.
+2) User can save a payment method via SetupIntent UI flow.
+3) Auto-top-up:
+   - When credits spent drop below threshold, system charges off-session and grants credits
+   - Caps + cooldown enforced
+   - Failures recorded and surfaced
+4) Ledger idempotency prevents duplicate credits on webhook retries.
+5) No credits are granted client-side.
+6) All pages compile; no TypeScript errors; DB migrations apply.
+
+Proceed to implement now.

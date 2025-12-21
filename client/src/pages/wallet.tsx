@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,7 +47,7 @@ import {
   ChevronDown,
   Settings2,
 } from "lucide-react";
-import type { Wallet as WalletType, WalletTransaction, PaymentMethod, AutoTopupRule, App } from "@shared/schema";
+import type { Wallet as WalletType, WalletTransaction, PaymentMethod, AutoTopupRule, App, CreditPack } from "@shared/schema";
 
 interface WalletData {
   wallet: WalletType | null;
@@ -661,11 +661,156 @@ function AutoTopupDialog({
   );
 }
 
+// Credit Packs Section for Stripe Checkout
+function CreditPacksSection() {
+  const { toast } = useToast();
+  const [purchasingPack, setPurchasingPack] = useState<string | null>(null);
+  
+  const { data: packs, isLoading: packsLoading } = useQuery<CreditPack[]>({
+    queryKey: ["/api/billing/packs"],
+  });
+
+  const purchaseMutation = useMutation({
+    mutationFn: async (packSku: string) => {
+      return apiRequest("POST", "/api/billing/checkout-session", { packSku });
+    },
+    onSuccess: (data: any) => {
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        toast({
+          title: "Error",
+          description: "Unable to start checkout. Please try again.",
+          variant: "destructive",
+        });
+        setPurchasingPack(null);
+      }
+    },
+    onError: (error) => {
+      toast({
+        title: "Purchase failed",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+      setPurchasingPack(null);
+    },
+  });
+
+  const handlePurchase = (packSku: string) => {
+    setPurchasingPack(packSku);
+    purchaseMutation.mutate(packSku);
+  };
+
+  if (packsLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CreditCard className="h-5 w-5" />
+            Credit Packs
+          </CardTitle>
+          <CardDescription>Purchase credits for your account</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {[...Array(5)].map((_, i) => (
+              <Skeleton key={i} className="h-32 rounded-lg" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!packs || packs.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CreditCard className="h-5 w-5" />
+          Credit Packs
+        </CardTitle>
+        <CardDescription>
+          Purchase credits instantly with card, Apple Pay, or Google Pay
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {packs.map((pack) => {
+            const isPurchasing = purchasingPack === pack.sku;
+            const isBestValue = pack.sku === "credits_100" || pack.sku === "credits_250";
+            
+            return (
+              <button
+                key={pack.id}
+                onClick={() => handlePurchase(pack.sku)}
+                disabled={isPurchasing || purchaseMutation.isPending}
+                className={`relative p-4 rounded-lg border text-center transition-all hover-elevate ${
+                  isBestValue ? "border-primary bg-primary/5" : ""
+                } ${isPurchasing ? "opacity-70" : ""}`}
+                data-testid={`credit-pack-${pack.sku}`}
+              >
+                {isBestValue && (
+                  <Badge className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs">
+                    Popular
+                  </Badge>
+                )}
+                <div className="text-2xl font-bold tabular-nums">
+                  {pack.creditsAmount}
+                </div>
+                <div className="text-sm text-muted-foreground">credits</div>
+                <div className="mt-2 font-semibold text-primary">
+                  ${(pack.priceCents / 100).toFixed(0)}
+                </div>
+                {isPurchasing && (
+                  <Loader2 className="absolute bottom-2 right-2 h-4 w-4 animate-spin text-primary" />
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground mt-3 text-center">
+          Secure payment powered by Stripe. All major cards, Apple Pay, and Google Pay accepted.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function WalletPage() {
   const [filter, setFilter] = useState<"all" | "CREDIT" | "DEBIT">("all");
+  const { toast } = useToast();
   const { data, isLoading, refetch, isRefetching } = useQuery<WalletData>({
     queryKey: ["/api/wallet"],
   });
+
+  // Handle return from Stripe Checkout
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const payment = urlParams.get("payment");
+    const sessionId = urlParams.get("session_id");
+
+    if (payment === "success") {
+      toast({
+        title: "Payment successful!",
+        description: "Your credits have been added to your account.",
+      });
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Refresh to show updated balance
+      refetch();
+    } else if (payment === "cancelled") {
+      toast({
+        title: "Payment cancelled",
+        description: "Your payment was cancelled. No charges were made.",
+        variant: "default",
+      });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [toast, refetch]);
 
   const filteredTransactions = data?.transactions?.filter(
     (t) => filter === "all" || t.type === filter
@@ -707,6 +852,9 @@ export default function WalletPage() {
             />
           </div>
         </div>
+
+        {/* Credit Packs Section */}
+        <CreditPacksSection />
 
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-1">

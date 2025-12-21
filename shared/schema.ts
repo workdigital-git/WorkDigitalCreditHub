@@ -699,6 +699,147 @@ export const autoTopupConfigSchema = z.object({
   active: z.boolean(),
 });
 
+// Stripe Checkout + Wallet Ledger Enums
+export const ledgerEntryTypeEnum = pgEnum("ledger_entry_type", [
+  "WALLET_TOPUP_PENDING",
+  "WALLET_TOPUP_SUCCEEDED",
+  "WALLET_TOPUP_FAILED",
+  "CREDITS_GRANTED",
+  "CREDITS_SPENT",
+  "CREDITS_REVOKED",
+  "AUTOPAY_TOPUP_SUCCEEDED",
+  "AUTOPAY_TOPUP_FAILED",
+  "REFERRAL_BONUS"
+]);
+
+export const autopayAttemptStatusEnum = pgEnum("autopay_attempt_status", [
+  "QUEUED",
+  "PROCESSING",
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED"
+]);
+
+// Stripe Customers - link platform users to Stripe customer IDs
+export const stripeCustomers = pgTable("stripe_customers", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+  stripeCustomerId: text("stripe_customer_id").notNull().unique(),
+  defaultPaymentMethodId: text("default_payment_method_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertStripeCustomerSchema = createInsertSchema(stripeCustomers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Credit Packs - predefined credit purchase options
+export const creditPacks = pgTable("credit_packs", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  sku: text("sku").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  priceCents: bigint("price_cents", { mode: "number" }).notNull(),
+  creditsAmount: bigint("credits_amount", { mode: "number" }).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  displayOrder: bigint("display_order", { mode: "number" }).default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertCreditPackSchema = createInsertSchema(creditPacks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Wallet Ledger - immutable transaction log for idempotent credit granting
+export const walletLedger = pgTable("wallet_ledger", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  walletId: varchar("wallet_id", { length: 36 }).references(() => wallets.id, { onDelete: "set null" }),
+  type: ledgerEntryTypeEnum("type").notNull(),
+  amountCents: bigint("amount_cents", { mode: "number" }),
+  creditsDelta: bigint("credits_delta", { mode: "number" }).default(0).notNull(),
+  currency: text("currency").default("usd").notNull(),
+  stripeEventId: text("stripe_event_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  packSku: text("pack_sku"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertWalletLedgerSchema = createInsertSchema(walletLedger).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Autopay Settings - enhanced auto-topup configuration
+export const autopaySettings = pgTable("autopay_settings", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }).unique(),
+  enabled: boolean("enabled").default(false).notNull(),
+  thresholdCredits: bigint("threshold_credits", { mode: "number" }).default(10).notNull(),
+  topupPackSku: text("topup_pack_sku"),
+  paymentMethodId: varchar("payment_method_id", { length: 36 }).references(() => paymentMethods.id, { onDelete: "set null" }),
+  maxTopupsPerDay: bigint("max_topups_per_day", { mode: "number" }).default(2).notNull(),
+  maxTopupsPerWeek: bigint("max_topups_per_week", { mode: "number" }).default(6).notNull(),
+  cooldownMinutes: bigint("cooldown_minutes", { mode: "number" }).default(30).notNull(),
+  lastTopupAt: timestamp("last_topup_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertAutopaySettingsSchema = createInsertSchema(autopaySettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Autopay Attempts - track individual auto-topup attempts
+export const autopayAttempts = pgTable("autopay_attempts", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  triggeredByLedgerId: varchar("triggered_by_ledger_id", { length: 36 }).references(() => walletLedger.id, { onDelete: "set null" }),
+  status: autopayAttemptStatusEnum("status").default("QUEUED").notNull(),
+  packSku: text("pack_sku").notNull(),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  failureCode: text("failure_code"),
+  failureMessage: text("failure_message"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertAutopayAttemptSchema = createInsertSchema(autopayAttempts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+// Checkout Sessions - track pending Stripe Checkout sessions
+export const checkoutSessions = pgTable("checkout_sessions", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  stripeSessionId: text("stripe_session_id").notNull().unique(),
+  packSku: text("pack_sku"),
+  amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  creditsAmount: bigint("credits_amount", { mode: "number" }).notNull(),
+  status: text("status").default("pending").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertCheckoutSessionSchema = createInsertSchema(checkoutSessions).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -743,3 +884,15 @@ export type Referral = typeof referrals.$inferSelect;
 export type InsertReferral = z.infer<typeof insertReferralSchema>;
 export type ReferralSettings = typeof referralSettings.$inferSelect;
 export type InsertReferralSettings = z.infer<typeof insertReferralSettingsSchema>;
+export type StripeCustomer = typeof stripeCustomers.$inferSelect;
+export type InsertStripeCustomer = z.infer<typeof insertStripeCustomerSchema>;
+export type CreditPack = typeof creditPacks.$inferSelect;
+export type InsertCreditPack = z.infer<typeof insertCreditPackSchema>;
+export type WalletLedger = typeof walletLedger.$inferSelect;
+export type InsertWalletLedger = z.infer<typeof insertWalletLedgerSchema>;
+export type AutopaySettings = typeof autopaySettings.$inferSelect;
+export type InsertAutopaySettings = z.infer<typeof insertAutopaySettingsSchema>;
+export type AutopayAttempt = typeof autopayAttempts.$inferSelect;
+export type InsertAutopayAttempt = z.infer<typeof insertAutopayAttemptSchema>;
+export type CheckoutSession = typeof checkoutSessions.$inferSelect;
+export type InsertCheckoutSession = z.infer<typeof insertCheckoutSessionSchema>;

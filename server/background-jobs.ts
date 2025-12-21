@@ -2,6 +2,7 @@ import { storage } from "./storage";
 
 let jobIntervalId: NodeJS.Timeout | null = null;
 let isAutoTopupProcessing = false;
+let isLedgerAutoTopupProcessing = false;
 let isSubscriptionProcessing = false;
 
 interface JobResult {
@@ -96,6 +97,176 @@ async function processAutoTopups(): Promise<JobResult> {
     console.error("[Background Job] Error processing auto top-ups:", error);
   } finally {
     isAutoTopupProcessing = false;
+  }
+
+  return result;
+}
+
+// Enhanced auto-topup using ledger-based credit system with Stripe off-session payments
+async function processLedgerAutoTopups(): Promise<JobResult> {
+  if (isLedgerAutoTopupProcessing) {
+    return { triggered: 0, failed: 0, skipped: 0 };
+  }
+
+  isLedgerAutoTopupProcessing = true;
+  const result: JobResult = { triggered: 0, failed: 0, skipped: 0 };
+
+  try {
+    // Get all enabled autopay settings
+    const db = await import("./db");
+    const { autopaySettings, stripeCustomers } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    
+    const enabledSettings = await db.db.select()
+      .from(autopaySettings)
+      .where(eq(autopaySettings.enabled, true));
+
+    for (const settings of enabledSettings) {
+      try {
+        // Check credit balance from ledger
+        const creditBalance = await storage.getUserCreditBalance(settings.userId);
+        
+        // Skip if above threshold
+        if (creditBalance >= settings.thresholdCredits) {
+          result.skipped++;
+          continue;
+        }
+
+        // Check caps
+        const now = new Date();
+        const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+        const attemptsToday = await storage.countRecentAutopayAttempts(settings.userId, oneDayAgo);
+        const attemptsThisWeek = await storage.countRecentAutopayAttempts(settings.userId, oneWeekAgo);
+
+        if (attemptsToday >= settings.maxTopupsPerDay) {
+          console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: daily limit reached`);
+          result.skipped++;
+          continue;
+        }
+
+        if (attemptsThisWeek >= settings.maxTopupsPerWeek) {
+          console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: weekly limit reached`);
+          result.skipped++;
+          continue;
+        }
+
+        // Check cooldown
+        if (settings.lastTopupAt) {
+          const cooldownEnds = new Date(settings.lastTopupAt.getTime() + settings.cooldownMinutes * 60 * 1000);
+          if (now < cooldownEnds) {
+            console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: in cooldown`);
+            result.skipped++;
+            continue;
+          }
+        }
+
+        // Get credit pack
+        if (!settings.topupPackSku) {
+          console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: no pack configured`);
+          result.skipped++;
+          continue;
+        }
+
+        const pack = await storage.getCreditPackBySku(settings.topupPackSku);
+        if (!pack || !pack.isActive) {
+          console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: invalid pack`);
+          result.skipped++;
+          continue;
+        }
+
+        // Get Stripe customer and payment method
+        const stripeCustomer = await storage.getStripeCustomer(settings.userId);
+        if (!stripeCustomer) {
+          console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: no Stripe customer`);
+          result.skipped++;
+          continue;
+        }
+
+        const paymentMethodId = settings.paymentMethodId || stripeCustomer.defaultPaymentMethodId;
+        if (!paymentMethodId) {
+          console.log(`[Background Job] Skipping auto-topup for user ${settings.userId}: no payment method`);
+          result.skipped++;
+          continue;
+        }
+
+        // Create attempt record
+        const idempotencyKey = `auto_topup_${settings.userId}_${Date.now()}`;
+        const attempt = await storage.createAutopayAttempt({
+          userId: settings.userId,
+          packSku: pack.sku,
+          amountCents: pack.priceCents,
+          status: "PROCESSING",
+        });
+
+        // Process off-session payment
+        const { createOffSessionPayment } = await import("./payments/stripe-service");
+        const paymentResult = await createOffSessionPayment(
+          stripeCustomer.stripeCustomerId,
+          paymentMethodId,
+          pack.priceCents,
+          {
+            userId: settings.userId,
+            packSku: pack.sku,
+            creditsAmount: String(pack.creditsAmount),
+            type: "auto_topup",
+          },
+          idempotencyKey
+        );
+
+        if (paymentResult.success) {
+          // Update attempt as succeeded
+          await storage.updateAutopayAttempt(attempt.id, {
+            status: "SUCCEEDED",
+            stripePaymentIntentId: paymentResult.paymentIntentId,
+          });
+
+          // Update last topup time
+          await storage.updateAutopaySettings(settings.userId, {
+            lastTopupAt: new Date(),
+          });
+
+          // Create ledger entry
+          await storage.createLedgerEntry({
+            userId: settings.userId,
+            type: "AUTOPAY_TOPUP_SUCCEEDED",
+            creditsDelta: pack.creditsAmount,
+            amountCents: pack.priceCents,
+            idempotencyKey: `ledger_${idempotencyKey}`,
+            stripePaymentIntentId: paymentResult.paymentIntentId,
+            packSku: pack.sku,
+            metadata: { attemptId: attempt.id, description: `Auto top-up: ${pack.creditsAmount} credits` },
+          });
+
+          // Also update legacy wallet for backwards compatibility
+          let wallet = await storage.getWalletByUserId(settings.userId);
+          if (wallet) {
+            await storage.updateWalletBalance(wallet.id, pack.priceCents);
+          }
+
+          result.triggered++;
+          console.log(`[Background Job] Ledger auto-topup success for user ${settings.userId}: +${pack.creditsAmount} credits`);
+        } else {
+          // Update attempt as failed
+          await storage.updateAutopayAttempt(attempt.id, {
+            status: "FAILED",
+            failureMessage: paymentResult.error,
+            failureCode: paymentResult.declineCode,
+          });
+
+          result.failed++;
+          console.log(`[Background Job] Ledger auto-topup failed for user ${settings.userId}: ${paymentResult.error}`);
+        }
+      } catch (error: any) {
+        result.failed++;
+        console.error(`[Background Job] Ledger auto-topup error for user ${settings.userId}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error("[Background Job] Error processing ledger auto top-ups:", error);
+  } finally {
+    isLedgerAutoTopupProcessing = false;
   }
 
   return result;
@@ -262,11 +433,16 @@ async function processSubscriptionBilling(): Promise<SubscriptionBillingResult> 
 
 async function runJobs(): Promise<void> {
   const autoTopupResult = await processAutoTopups();
+  const ledgerAutoTopupResult = await processLedgerAutoTopups();
   const webhookRetries = await processWebhookRetries();
   const subscriptionResult = await processSubscriptionBilling();
 
-  if (autoTopupResult.triggered > 0 || autoTopupResult.failed > 0 || webhookRetries > 0 || subscriptionResult.billed > 0) {
-    console.log(`[Background Job] Run complete - Auto top-ups: ${autoTopupResult.triggered} triggered | Subscriptions: ${subscriptionResult.billed} billed | Webhook retries: ${webhookRetries}`);
+  const hasActivity = autoTopupResult.triggered > 0 || autoTopupResult.failed > 0 ||
+    ledgerAutoTopupResult.triggered > 0 || ledgerAutoTopupResult.failed > 0 ||
+    webhookRetries > 0 || subscriptionResult.billed > 0;
+
+  if (hasActivity) {
+    console.log(`[Background Job] Run complete - Legacy top-ups: ${autoTopupResult.triggered} | Ledger top-ups: ${ledgerAutoTopupResult.triggered} | Subscriptions: ${subscriptionResult.billed} billed | Webhook retries: ${webhookRetries}`);
   }
 }
 
@@ -291,17 +467,19 @@ export function stopBackgroundJobs(): void {
   }
 }
 
-export async function runJobsManually(): Promise<{ autoTopups: JobResult; webhookRetries: number; subscriptionBilling: SubscriptionBillingResult }> {
+export async function runJobsManually(): Promise<{ autoTopups: JobResult; ledgerAutoTopups: JobResult; webhookRetries: number; subscriptionBilling: SubscriptionBillingResult }> {
   const autoTopups = await processAutoTopups();
+  const ledgerAutoTopups = await processLedgerAutoTopups();
   const webhookRetries = await processWebhookRetries();
   const subscriptionBilling = await processSubscriptionBilling();
-  return { autoTopups, webhookRetries, subscriptionBilling };
+  return { autoTopups, ledgerAutoTopups, webhookRetries, subscriptionBilling };
 }
 
-export function getJobStatus(): { running: boolean; autoTopupProcessing: boolean; subscriptionProcessing: boolean } {
+export function getJobStatus(): { running: boolean; autoTopupProcessing: boolean; ledgerAutoTopupProcessing: boolean; subscriptionProcessing: boolean } {
   return {
     running: jobIntervalId !== null,
     autoTopupProcessing: isAutoTopupProcessing,
+    ledgerAutoTopupProcessing: isLedgerAutoTopupProcessing,
     subscriptionProcessing: isSubscriptionProcessing,
   };
 }
