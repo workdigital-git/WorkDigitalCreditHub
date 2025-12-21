@@ -736,6 +736,24 @@ export const insertStripeCustomerSchema = createInsertSchema(stripeCustomers).om
   updatedAt: true,
 });
 
+// Stripe Events - track received webhook events for idempotency
+export const stripeEvents = pgTable("stripe_events", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  stripeEventId: text("stripe_event_id").notNull().unique(),
+  type: text("type").notNull(),
+  processed: boolean("processed").default(false).notNull(),
+  processingResult: text("processing_result"),
+  rawPayload: jsonb("raw_payload"),
+  receivedAt: timestamp("received_at").defaultNow().notNull(),
+  processedAt: timestamp("processed_at"),
+});
+
+export const insertStripeEventSchema = createInsertSchema(stripeEvents).omit({
+  id: true,
+  receivedAt: true,
+  processedAt: true,
+});
+
 // Credit Packs - predefined credit purchase options
 export const creditPacks = pgTable("credit_packs", {
   id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
@@ -886,6 +904,8 @@ export type ReferralSettings = typeof referralSettings.$inferSelect;
 export type InsertReferralSettings = z.infer<typeof insertReferralSettingsSchema>;
 export type StripeCustomer = typeof stripeCustomers.$inferSelect;
 export type InsertStripeCustomer = z.infer<typeof insertStripeCustomerSchema>;
+export type StripeEvent = typeof stripeEvents.$inferSelect;
+export type InsertStripeEvent = z.infer<typeof insertStripeEventSchema>;
 export type CreditPack = typeof creditPacks.$inferSelect;
 export type InsertCreditPack = z.infer<typeof insertCreditPackSchema>;
 export type WalletLedger = typeof walletLedger.$inferSelect;

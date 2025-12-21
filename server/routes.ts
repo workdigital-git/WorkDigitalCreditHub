@@ -425,16 +425,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       console.log(`Stripe webhook received: ${event.type} (ID: ${event.id})`);
 
+      // Check if event was already processed (idempotency)
+      const existingEvent = await storage.getStripeEventById(event.id);
+      if (existingEvent && existingEvent.processed) {
+        console.log(`Stripe webhook: Event ${event.id} already processed, skipping`);
+        return res.json({ received: true, alreadyProcessed: true });
+      }
+
+      // Store the event for idempotency tracking (if not already stored)
+      if (!existingEvent) {
+        await storage.createStripeEvent({
+          stripeEventId: event.id,
+          type: event.type,
+          processed: false,
+          rawPayload: event,
+        });
+      }
+
       // Handle the event
+      let processingResult = "unhandled";
       if (event.type === "checkout.session.completed") {
         await handleCheckoutSessionCompleted(event);
+        processingResult = "success";
       } else if (event.type === "payment_intent.succeeded") {
         await handlePaymentIntentSucceeded(event);
+        processingResult = "success";
       } else if (event.type === "setup_intent.succeeded") {
         await handleSetupIntentSucceeded(event);
+        processingResult = "success";
       } else {
         console.log(`Stripe webhook: Unhandled event type: ${event.type}`);
+        processingResult = "unhandled_event_type";
       }
+
+      // Mark event as processed only on success (leave unprocessed on error for Stripe retries)
+      await storage.markStripeEventProcessed(event.id, processingResult);
 
       res.json({ received: true });
     } catch (error) {
@@ -1989,6 +2014,89 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("Update autopay settings error:", error);
       res.status(500).json({ message: "Failed to update autopay settings" });
+    }
+  });
+
+  // Stripe status diagnostic endpoint
+  app.get("/api/billing/stripe/status", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { isStripeConfigured, getStripePublishableKey } = await import("./payments/stripe-service");
+      const stripeEnabled = await isStripeConfigured();
+      
+      let mode: "test" | "live" | "unknown" = "unknown";
+      if (stripeEnabled) {
+        const publishableKey = await getStripePublishableKey();
+        if (publishableKey?.startsWith("pk_test_")) {
+          mode = "test";
+        } else if (publishableKey?.startsWith("pk_live_")) {
+          mode = "live";
+        }
+      }
+
+      const hasWebhookSecret = !!process.env.STRIPE_WEBHOOK_SECRET;
+
+      res.json({
+        stripeEnabled,
+        mode,
+        hasWebhookSecret,
+      });
+    } catch (error) {
+      console.error("Get Stripe status error:", error);
+      res.status(500).json({ message: "Failed to get Stripe status" });
+    }
+  });
+
+  // Create or get Stripe customer for current user
+  app.post("/api/billing/stripe/customer", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      
+      // Check if user already has a Stripe customer
+      let stripeCustomer = await storage.getStripeCustomer(userId);
+      
+      if (stripeCustomer) {
+        return res.json({ stripeCustomerId: stripeCustomer.stripeCustomerId });
+      }
+
+      // Create new Stripe customer
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const { createStripeCustomer } = await import("./payments/stripe-service");
+      const result = await createStripeCustomer(user.email, user.fullName || undefined, { userId });
+      
+      if (!result.success || !result.customerId) {
+        return res.status(500).json({ message: "Failed to create Stripe customer" });
+      }
+
+      stripeCustomer = await storage.createStripeCustomer({
+        userId,
+        stripeCustomerId: result.customerId,
+      });
+
+      res.json({ stripeCustomerId: stripeCustomer.stripeCustomerId });
+    } catch (error) {
+      console.error("Create Stripe customer error:", error);
+      res.status(500).json({ message: "Failed to create Stripe customer" });
+    }
+  });
+
+  // Get existing Stripe customer for current user
+  app.get("/api/billing/stripe/customer", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const stripeCustomer = await storage.getStripeCustomer(userId);
+      
+      if (!stripeCustomer) {
+        return res.json({ stripeCustomerId: null });
+      }
+
+      res.json({ stripeCustomerId: stripeCustomer.stripeCustomerId });
+    } catch (error) {
+      console.error("Get Stripe customer error:", error);
+      res.status(500).json({ message: "Failed to get Stripe customer" });
     }
   });
 

@@ -23,6 +23,7 @@ import {
   referrals,
   referralSettings,
   stripeCustomers,
+  stripeEvents,
   creditPacks,
   walletLedger,
   autopaySettings,
@@ -75,6 +76,8 @@ import {
   type InsertReferralSettings,
   type StripeCustomer,
   type InsertStripeCustomer,
+  type StripeEvent,
+  type InsertStripeEvent,
   type CreditPack,
   type InsertCreditPack,
   type WalletLedger,
@@ -1394,6 +1397,26 @@ export class DatabaseStorage implements IStorage {
       .update(stripeCustomers)
       .set({ ...data, updatedAt: new Date() })
       .where(eq(stripeCustomers.userId, userId))
+      .returning();
+    return updated || undefined;
+  }
+
+  // Stripe Events - for webhook idempotency
+  async getStripeEventById(stripeEventId: string): Promise<StripeEvent | undefined> {
+    const [event] = await db.select().from(stripeEvents).where(eq(stripeEvents.stripeEventId, stripeEventId));
+    return event || undefined;
+  }
+
+  async createStripeEvent(event: InsertStripeEvent): Promise<StripeEvent> {
+    const [created] = await db.insert(stripeEvents).values(event).returning();
+    return created;
+  }
+
+  async markStripeEventProcessed(stripeEventId: string, result?: string): Promise<StripeEvent | undefined> {
+    const [updated] = await db
+      .update(stripeEvents)
+      .set({ processed: true, processingResult: result || "success", processedAt: new Date() })
+      .where(eq(stripeEvents.stripeEventId, stripeEventId))
       .returning();
     return updated || undefined;
   }

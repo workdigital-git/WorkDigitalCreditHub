@@ -45,6 +45,7 @@ import {
   EyeOff,
   QrCode,
   Smartphone,
+  CreditCard,
 } from "lucide-react";
 import type { ApiKey } from "@shared/schema";
 
@@ -720,6 +721,143 @@ function ApiKeysTab() {
   );
 }
 
+interface StripeStatus {
+  stripeEnabled: boolean;
+  mode: "test" | "live" | "unknown";
+  hasWebhookSecret: boolean;
+}
+
+interface StripeCustomer {
+  stripeCustomerId: string | null;
+}
+
+function BillingDevTab() {
+  const { toast } = useToast();
+
+  const { data: stripeStatus, isLoading: statusLoading } = useQuery<StripeStatus>({
+    queryKey: ["/api/billing/stripe/status"],
+  });
+
+  const { data: stripeCustomer, isLoading: customerLoading } = useQuery<StripeCustomer>({
+    queryKey: ["/api/billing/stripe/customer"],
+  });
+
+  const createCustomerMutation = useMutation({
+    mutationFn: async (): Promise<StripeCustomer> => {
+      const response = await apiRequest("POST", "/api/billing/stripe/customer", {});
+      return response.json();
+    },
+    onSuccess: (data: StripeCustomer) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/billing/stripe/customer"] });
+      toast({ 
+        title: "Stripe Customer Created", 
+        description: `Customer ID: ${data.stripeCustomerId}` 
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to create customer",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied to clipboard" });
+  };
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Stripe Integration Status</CardTitle>
+          <CardDescription>Development diagnostics for Stripe integration</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {statusLoading ? (
+            <Skeleton className="h-20 w-full" />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1">
+                <Label className="text-muted-foreground">Stripe Enabled</Label>
+                <div className="flex items-center gap-2">
+                  <Badge variant={stripeStatus?.stripeEnabled ? "default" : "destructive"} data-testid="badge-stripe-enabled">
+                    {stripeStatus?.stripeEnabled ? "Yes" : "No"}
+                  </Badge>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-muted-foreground">Mode</Label>
+                <div className="flex items-center gap-2">
+                  <Badge 
+                    variant={stripeStatus?.mode === "live" ? "destructive" : stripeStatus?.mode === "test" ? "secondary" : "outline"}
+                    data-testid="badge-stripe-mode"
+                  >
+                    {stripeStatus?.mode || "Unknown"}
+                  </Badge>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-muted-foreground">Webhook Secret</Label>
+                <div className="flex items-center gap-2">
+                  <Badge variant={stripeStatus?.hasWebhookSecret ? "default" : "outline"} data-testid="badge-webhook-secret">
+                    {stripeStatus?.hasWebhookSecret ? "Configured" : "Not Set"}
+                  </Badge>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Stripe Customer</CardTitle>
+          <CardDescription>Your Stripe customer record for payment processing</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {customerLoading ? (
+            <Skeleton className="h-12 w-full" />
+          ) : stripeCustomer?.stripeCustomerId ? (
+            <div className="flex items-center justify-between gap-4 p-3 bg-muted rounded-md">
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">Customer ID</Label>
+                <code className="text-sm font-mono" data-testid="text-stripe-customer-id">
+                  {stripeCustomer.stripeCustomerId}
+                </code>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => copyToClipboard(stripeCustomer.stripeCustomerId!)}
+                data-testid="button-copy-customer-id"
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                No Stripe customer record exists yet. Create one to enable payment features.
+              </p>
+              <Button
+                onClick={() => createCustomerMutation.mutate()}
+                disabled={createCustomerMutation.isPending}
+                data-testid="button-create-stripe-customer"
+              >
+                {createCustomerMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Create Stripe Customer
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <Layout>
@@ -747,6 +885,10 @@ export default function SettingsPage() {
               <Key className="h-4 w-4" />
               <span className="hidden sm:inline">API Keys</span>
             </TabsTrigger>
+            <TabsTrigger value="billing-dev" className="gap-2" data-testid="tab-billing-dev">
+              <CreditCard className="h-4 w-4" />
+              <span className="hidden sm:inline">Billing (Dev)</span>
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="profile">
@@ -759,6 +901,10 @@ export default function SettingsPage() {
 
           <TabsContent value="api-keys">
             <ApiKeysTab />
+          </TabsContent>
+
+          <TabsContent value="billing-dev">
+            <BillingDevTab />
           </TabsContent>
         </Tabs>
       </div>

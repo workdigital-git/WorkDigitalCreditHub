@@ -1,0 +1,155 @@
+You are implementing Stripe API integration in the Credits Hub codebase (Node/Express + Postgres/Drizzle + React).
+
+GOAL
+Add a robust, production-safe Stripe integration layer that supports:
+- Stripe SDK initialization
+- Webhook endpoint with signature verification (raw body)
+- Stripe customer management (create/get)
+- Minimal API endpoints to verify Stripe integration works end-to-end in DEV mode
+This is the base required before building Checkout, SetupIntent, wallet top-ups, and auto-top-up.
+
+CONSTRAINTS
+- Do not grant credits in this task.
+- Do not implement Checkout Sessions in this task (that will come next).
+- Ensure webhook uses raw body; do NOT break JSON parsing for other routes.
+- Store only Stripe IDs and non-sensitive metadata.
+- Provide idempotency patterns for later use.
+- Keep changes isolated to a billing/stripe module pattern.
+
+-------------------------------------------------------------------
+A) DEPENDENCIES
+
+1) Install Stripe SDK
+- Add dependency: "stripe"
+- If TypeScript, ensure types are included.
+
+2) Add request raw-body handling utility (if needed)
+- Use express.raw({ type: 'application/json' }) specifically for webhook route.
+- Keep express.json() for all other routes.
+
+-------------------------------------------------------------------
+B) ENVIRONMENT VARIABLES
+
+Add to .env.example (and read via process.env):
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- STRIPE_PUBLISHABLE_KEY
+- STRIPE_API_VERSION (optional; otherwise set in code)
+- APP_BASE_URL (for future return URLs)
+
+Add runtime validation on server startup:
+- If STRIPE_SECRET_KEY missing -> log warning + disable billing routes (return 503)
+- If STRIPE_WEBHOOK_SECRET missing -> allow non-webhook billing routes but webhook returns 503
+
+-------------------------------------------------------------------
+C) SERVER MODULE STRUCTURE
+
+Create files:
+1) server/stripe/stripeClient.ts
+- Export a singleton `stripe` client:
+  - new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: "2024-06-20" (or current), typescript: true if supported })
+- Export helper `isStripeEnabled()`.
+
+2) server/stripe/stripeCustomers.ts
+- Functions:
+  - getOrCreateStripeCustomer(userId, email, name?) -> stripeCustomerId
+  - getStripeCustomerByUserId(userId) -> stripeCustomerId | null
+- DB storage: create table stripe_customers (server-side drizzle migration)
+  - id uuid pk
+  - userId unique
+  - stripeCustomerId unique
+  - createdAt, updatedAt
+
+3) server/stripe/webhook.ts
+- Export express router handling:
+  - POST /api/stripe/webhook
+  - Uses express.raw({ type: 'application/json' })
+  - Verifies signature using STRIPE_WEBHOOK_SECRET:
+    stripe.webhooks.constructEvent(req.body, sig, secret)
+  - Logs event type + id
+  - Returns 200 quickly
+NOTE: Do not process credits here yet; just verify + store event if desired.
+
+4) server/stripe/stripeEvents.ts (optional but recommended)
+- Add table stripe_events to store webhook ids for idempotency:
+  - id uuid pk
+  - stripeEventId unique
+  - type string
+  - receivedAt timestamp
+  - raw jsonb nullable
+- Insert event id if not exists. This prevents double-processing later.
+
+-------------------------------------------------------------------
+D) ROUTES
+
+Modify server/routes.ts (or equivalent central router):
+- Mount webhook route with raw body BEFORE express.json() applies globally OR implement route-level raw parser.
+Example approach:
+  app.post("/api/stripe/webhook", express.raw({type:"application/json"}), handler)
+and keep app.use(express.json()) for everything else.
+
+Add a minimal billing diagnostics endpoint:
+1) GET /api/billing/stripe/status
+- Auth required
+- Returns:
+  {
+    "stripeEnabled": true/false,
+    "mode": "test"|"live"|"unknown",
+    "hasWebhookSecret": true/false
+  }
+Determine mode by Stripe secret key prefix:
+- sk_test_ => test
+- sk_live_ => live
+
+Add a minimal customer endpoint:
+2) POST /api/billing/stripe/customer
+- Auth required
+- Creates/returns Stripe customer id for current user
+- Uses user email from your auth session (Credits Hub OAuth)
+- Response:
+  { "stripeCustomerId": "cus_..." }
+
+Optional read endpoint:
+3) GET /api/billing/stripe/customer
+- Auth required
+- Returns existing Stripe customer id if any.
+
+-------------------------------------------------------------------
+E) FRONTEND (MINIMAL)
+
+Add a simple admin/dev-only page or section:
+- Shows /api/billing/stripe/status response
+- Button: "Create Stripe Customer"
+- Display returned cus_ id
+
+If you already have a Settings page, add a “Billing (Dev)” panel there.
+
+-------------------------------------------------------------------
+F) TESTING IN DEV MODE
+
+1) Ensure /api/billing/stripe/status returns stripeEnabled true when STRIPE_SECRET_KEY is present.
+2) Hit POST /api/billing/stripe/customer and confirm DB row is created.
+3) Webhook verification:
+- Add a note in docs on how to use Stripe CLI:
+  stripe listen --forward-to localhost:PORT/api/stripe/webhook
+  stripe trigger checkout.session.completed
+- Confirm handler prints event.id and returns 200.
+
+Create doc:
+- docs/payments/stripe-dev-setup.md
+Include:
+- setting env vars
+- running Stripe CLI listener
+- verifying webhook
+
+-------------------------------------------------------------------
+G) ACCEPTANCE CRITERIA
+
+- Stripe SDK initializes cleanly with env vars.
+- Webhook endpoint verifies Stripe signatures using raw body and returns 200.
+- Stripe customer creation works and stores cus_ id in DB.
+- Stripe events table (if implemented) prevents duplicate event processing later.
+- No credits are granted in this task.
+- TypeScript builds without errors.
+
+Proceed to implement now.
