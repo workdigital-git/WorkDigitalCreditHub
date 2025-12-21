@@ -2003,7 +2003,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/admin/apps/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { callbackUrl, allowedCallbackUrls, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
+      const { name, callbackUrl, allowedCallbackUrls, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
 
       const existingApp = await storage.getApp(id);
       if (!existingApp) {
@@ -2011,6 +2011,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       const updateData: Partial<typeof existingApp> = {};
+      
+      if (name !== undefined) {
+        if (typeof name !== "string" || name.trim().length === 0) {
+          return res.status(400).json({ message: "App name cannot be empty" });
+        }
+        updateData.name = name.trim();
+      }
       
       if (callbackUrl !== undefined) {
         if (typeof callbackUrl !== "string" || !callbackUrl.startsWith("http")) {

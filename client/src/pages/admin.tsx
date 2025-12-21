@@ -524,6 +524,7 @@ function AppsTab() {
   });
 
   const [editFormData, setEditFormData] = useState({
+    name: "",
     callbackUrl: "",
     additionalCallbackUrls: [""] as string[],
     description: "",
@@ -583,6 +584,7 @@ function AppsTab() {
       ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
       
       return apiRequest("PATCH", `/api/admin/apps/${editApp.id}`, {
+        name: editFormData.name,
         callbackUrl: editFormData.callbackUrl,
         allowedCallbackUrls: allCallbackUrls,
         description: editFormData.description,
@@ -630,6 +632,7 @@ function AppsTab() {
   const openEditDialog = (app: App) => {
     const additionalUrls = (app.allowedCallbackUrls || []).filter(url => url !== app.callbackUrl);
     setEditFormData({
+      name: app.name,
       callbackUrl: app.callbackUrl,
       additionalCallbackUrls: additionalUrls.length > 0 ? additionalUrls : [""],
       description: app.description || "",
@@ -1133,6 +1136,32 @@ function AppsTab() {
 
             <div className="space-y-4 rounded-lg border p-4">
               <div className="flex items-center gap-2 text-sm font-medium">
+                App Details
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">App Name</Label>
+                <Input
+                  id="edit-name"
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  placeholder="Enter app name"
+                  data-testid="input-edit-name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-description">Description</Label>
+                <Textarea
+                  id="edit-description"
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                  placeholder="Describe what this app does..."
+                  data-testid="input-edit-description"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-4 rounded-lg border p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
                 <Globe className="h-4 w-4" />
                 OAuth Callback URLs
               </div>
@@ -1213,17 +1242,6 @@ function AppsTab() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="edit-description">Description</Label>
-              <Textarea
-                id="edit-description"
-                value={editFormData.description}
-                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
-                placeholder="Describe what this app does..."
-                data-testid="input-edit-description"
-              />
-            </div>
-
-            <div className="space-y-2">
               <Label>Pricing Model</Label>
               <Select
                 value={editFormData.pricingModel}
@@ -1245,7 +1263,7 @@ function AppsTab() {
             <Button
               className="w-full"
               onClick={() => updateMutation.mutate()}
-              disabled={!editFormData.callbackUrl || updateMutation.isPending}
+              disabled={!editFormData.name.trim() || !editFormData.callbackUrl || updateMutation.isPending}
               data-testid="button-save-app-changes"
             >
               {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
