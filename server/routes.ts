@@ -4495,15 +4495,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.patch("/api/admin/merchant-settings", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
-      const { businessName, supportEmail, defaultCurrency, statementDescriptor, webhookUrl, logoUrl } = req.body;
+      const updateMerchantSettingsSchema = z.object({
+        businessName: z.string().min(1).max(100).optional(),
+        supportEmail: z.string().email().nullish(),
+        defaultCurrency: z.enum(["USD", "EUR", "GBP", "CAD", "AUD", "JPY"]).optional(),
+        statementDescriptor: z.string().min(1).max(22).regex(/^[A-Z0-9 ]*$/, "Only uppercase letters, numbers, and spaces allowed").optional(),
+        webhookUrl: z.string().url().nullish(),
+        logoUrl: z.string().url().nullish(),
+      });
+
+      const parseResult = updateMerchantSettingsSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ message: "Invalid input", errors: parseResult.error.flatten() });
+      }
+
+      const { businessName, supportEmail, defaultCurrency, statementDescriptor, webhookUrl, logoUrl } = parseResult.data;
 
       const updateData: Record<string, any> = {};
-      if (typeof businessName === "string") updateData.businessName = businessName;
-      if (typeof supportEmail === "string" || supportEmail === null) updateData.supportEmail = supportEmail;
-      if (typeof defaultCurrency === "string") updateData.defaultCurrency = defaultCurrency;
-      if (typeof statementDescriptor === "string") updateData.statementDescriptor = statementDescriptor.toUpperCase().substring(0, 22);
-      if (typeof webhookUrl === "string" || webhookUrl === null) updateData.webhookUrl = webhookUrl;
-      if (typeof logoUrl === "string" || logoUrl === null) updateData.logoUrl = logoUrl;
+      if (businessName !== undefined) updateData.businessName = businessName;
+      if (supportEmail !== undefined) updateData.supportEmail = supportEmail;
+      if (defaultCurrency !== undefined) updateData.defaultCurrency = defaultCurrency;
+      if (statementDescriptor !== undefined) updateData.statementDescriptor = statementDescriptor.toUpperCase();
+      if (webhookUrl !== undefined) updateData.webhookUrl = webhookUrl;
+      if (logoUrl !== undefined) updateData.logoUrl = logoUrl;
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
 
       const updated = await storage.updateMerchantSettings(updateData);
 

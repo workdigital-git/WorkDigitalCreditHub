@@ -75,6 +75,7 @@ import {
   Gift,
   Clock,
   Settings,
+  Building,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { User, App, Wallet } from "@shared/schema";
@@ -3637,6 +3638,216 @@ function PaymentGatewaysTab() {
   );
 }
 
+interface MerchantSettingsData {
+  id: string;
+  businessName: string;
+  supportEmail: string | null;
+  defaultCurrency: string;
+  statementDescriptor: string;
+  webhookUrl: string | null;
+  logoUrl: string | null;
+}
+
+function MerchantAccountCard() {
+  const { toast } = useToast();
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState<Partial<MerchantSettingsData>>({});
+
+  const { data: settings, isLoading } = useQuery<MerchantSettingsData>({
+    queryKey: ["/api/admin/merchant-settings"],
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: async (data: Partial<MerchantSettingsData>) => {
+      return apiRequest("PATCH", "/api/admin/merchant-settings", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/merchant-settings"] });
+      toast({ title: "Settings saved", description: "Merchant account settings updated successfully." });
+      setIsEditing(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Update failed",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleEdit = () => {
+    setFormData({
+      businessName: settings?.businessName || "Work Digital",
+      supportEmail: settings?.supportEmail || "",
+      defaultCurrency: settings?.defaultCurrency || "USD",
+      statementDescriptor: settings?.statementDescriptor || "WORKDIGITAL",
+      webhookUrl: settings?.webhookUrl || "",
+      logoUrl: settings?.logoUrl || "",
+    });
+    setIsEditing(true);
+  };
+
+  const handleSave = () => {
+    const payload: Record<string, any> = {};
+    if (formData.businessName) payload.businessName = formData.businessName;
+    if (formData.supportEmail) payload.supportEmail = formData.supportEmail;
+    else if (formData.supportEmail === "") payload.supportEmail = null;
+    if (formData.defaultCurrency) payload.defaultCurrency = formData.defaultCurrency;
+    if (formData.statementDescriptor) payload.statementDescriptor = formData.statementDescriptor.toUpperCase().replace(/[^A-Z0-9 ]/g, "");
+    if (formData.webhookUrl) payload.webhookUrl = formData.webhookUrl;
+    else if (formData.webhookUrl === "") payload.webhookUrl = null;
+    if (formData.logoUrl) payload.logoUrl = formData.logoUrl;
+    else if (formData.logoUrl === "") payload.logoUrl = null;
+    
+    updateMutation.mutate(payload as Partial<MerchantSettingsData>);
+  };
+
+  const currencyOptions = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY"];
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-4">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <Building className="h-5 w-5" />
+            Merchant Account
+          </CardTitle>
+          <CardDescription>
+            Configure your business details for payment processing
+          </CardDescription>
+        </div>
+        {!isEditing && (
+          <Button variant="outline" onClick={handleEdit} data-testid="button-edit-merchant">
+            <Edit className="h-4 w-4 mr-2" />
+            Edit
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-4">
+            {[...Array(4)].map((_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : isEditing ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="businessName">Business Name</Label>
+                <Input
+                  id="businessName"
+                  value={formData.businessName || ""}
+                  onChange={(e) => setFormData({ ...formData, businessName: e.target.value })}
+                  placeholder="Work Digital"
+                  data-testid="input-business-name"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="supportEmail">Support Email</Label>
+                <Input
+                  id="supportEmail"
+                  type="email"
+                  value={formData.supportEmail || ""}
+                  onChange={(e) => setFormData({ ...formData, supportEmail: e.target.value })}
+                  placeholder="support@workdigital.com"
+                  data-testid="input-support-email"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="defaultCurrency">Default Currency</Label>
+                <Select
+                  value={formData.defaultCurrency}
+                  onValueChange={(value) => setFormData({ ...formData, defaultCurrency: value })}
+                >
+                  <SelectTrigger data-testid="select-currency">
+                    <SelectValue placeholder="Select currency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {currencyOptions.map((currency) => (
+                      <SelectItem key={currency} value={currency}>
+                        {currency}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="statementDescriptor">Statement Descriptor</Label>
+                <Input
+                  id="statementDescriptor"
+                  value={formData.statementDescriptor || ""}
+                  onChange={(e) => setFormData({ ...formData, statementDescriptor: e.target.value.toUpperCase().substring(0, 22) })}
+                  placeholder="WORKDIGITAL"
+                  maxLength={22}
+                  data-testid="input-statement-descriptor"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Appears on customer bank statements (max 22 chars)
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="webhookUrl">Webhook URL (optional)</Label>
+              <Input
+                id="webhookUrl"
+                type="url"
+                value={formData.webhookUrl || ""}
+                onChange={(e) => setFormData({ ...formData, webhookUrl: e.target.value })}
+                placeholder="https://your-domain.com/webhooks/payments"
+                data-testid="input-webhook-url"
+              />
+            </div>
+            <div className="flex gap-2 pt-4">
+              <Button
+                onClick={handleSave}
+                disabled={updateMutation.isPending}
+                data-testid="button-save-merchant"
+              >
+                {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                Save Changes
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setIsEditing(false)}
+                disabled={updateMutation.isPending}
+                data-testid="button-cancel-merchant"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-xs">Business Name</Label>
+              <p className="font-medium" data-testid="text-business-name">{settings?.businessName || "—"}</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-xs">Support Email</Label>
+              <p className="font-medium" data-testid="text-support-email">{settings?.supportEmail || "—"}</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-xs">Default Currency</Label>
+              <p className="font-medium" data-testid="text-currency">{settings?.defaultCurrency || "USD"}</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-muted-foreground text-xs">Statement Descriptor</Label>
+              <p className="font-medium font-mono" data-testid="text-statement-descriptor">{settings?.statementDescriptor || "—"}</p>
+            </div>
+            {settings?.webhookUrl && (
+              <div className="space-y-1 sm:col-span-2">
+                <Label className="text-muted-foreground text-xs">Webhook URL</Label>
+                <p className="font-medium text-sm break-all" data-testid="text-webhook-url">{settings.webhookUrl}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 interface IntegrationHealthData {
   summary: {
     total_apps: number;
@@ -4644,7 +4855,10 @@ export default function AdminPage() {
           </TabsContent>
 
           <TabsContent value="payment-gateways">
-            <PaymentGatewaysTab />
+            <div className="space-y-6">
+              <MerchantAccountCard />
+              <PaymentGatewaysTab />
+            </div>
           </TabsContent>
 
           <TabsContent value="integration-health">
