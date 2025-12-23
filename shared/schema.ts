@@ -687,6 +687,24 @@ export const insertPaymentGatewaySettingsSchema = createInsertSchema(paymentGate
   updatedAt: true,
 });
 
+export const merchantSettings = pgTable("merchant_settings", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  businessName: text("business_name").default("Work Digital").notNull(),
+  supportEmail: text("support_email"),
+  defaultCurrency: text("default_currency").default("USD").notNull(),
+  statementDescriptor: text("statement_descriptor").default("WORKDIGITAL").notNull(),
+  webhookUrl: text("webhook_url"),
+  logoUrl: text("logo_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertMerchantSettingsSchema = createInsertSchema(merchantSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const fundWalletSchema = z.object({
   amountCents: z.number().min(100, "Minimum amount is $1.00"),
   paymentMethodId: z.string().uuid(),
@@ -898,6 +916,8 @@ export type IntegrationHealthMetrics = typeof integrationHealthMetrics.$inferSel
 export type InsertIntegrationHealthMetrics = z.infer<typeof insertIntegrationHealthMetricsSchema>;
 export type PaymentGatewaySettings = typeof paymentGatewaySettings.$inferSelect;
 export type InsertPaymentGatewaySettings = z.infer<typeof insertPaymentGatewaySettingsSchema>;
+export type MerchantSettings = typeof merchantSettings.$inferSelect;
+export type InsertMerchantSettings = z.infer<typeof insertMerchantSettingsSchema>;
 export type Referral = typeof referrals.$inferSelect;
 export type InsertReferral = z.infer<typeof insertReferralSchema>;
 export type ReferralSettings = typeof referralSettings.$inferSelect;
