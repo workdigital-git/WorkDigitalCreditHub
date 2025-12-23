@@ -188,8 +188,8 @@ async function processPayPalPayment(
   }
 
   const baseUrl = `https://${process.env.REPLIT_DOMAINS?.split(",")[0] || "localhost:5000"}`;
-  const returnUrl = options.returnUrl || `${baseUrl}/wallet?payment=success&gateway=paypal`;
-  const cancelUrl = options.cancelUrl || `${baseUrl}/wallet?payment=cancel&gateway=paypal`;
+  const returnUrl = options.returnUrl || `${baseUrl}/wallet?payment=paypal-success`;
+  const cancelUrl = options.cancelUrl || `${baseUrl}/wallet?payment=cancel`;
 
   try {
     const result = await createPayPalOrder({
