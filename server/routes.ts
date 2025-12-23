@@ -2316,6 +2316,92 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // Coinbase Integration Routes
+  app.get("/api/billing/coinbase/status", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { isCoinbaseConfigured, getCoinbaseMode } = await import("./payments/coinbase-service");
+      const configured = isCoinbaseConfigured();
+      const settings = await storage.getPaymentGatewaySettingsByGateway("COINBASE");
+      
+      res.json({
+        configured,
+        enabled: settings?.enabled || false,
+        mode: getCoinbaseMode(),
+        sandboxMode: settings?.sandboxMode ?? true,
+      });
+    } catch (error) {
+      console.error("Coinbase status error:", error);
+      res.status(500).json({ message: "Failed to get Coinbase status" });
+    }
+  });
+
+  // Create Coinbase crypto charge
+  app.post("/api/billing/coinbase/create-charge", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { amountCents } = req.body;
+      const userId = req.user!.id;
+
+      if (!amountCents || amountCents < 100) {
+        return res.status(400).json({ message: "Minimum amount is $1.00" });
+      }
+
+      const { createCoinbaseCharge, isCoinbaseConfigured } = await import("./payments/coinbase-service");
+
+      if (!isCoinbaseConfigured()) {
+        return res.status(400).json({ message: "Coinbase is not configured" });
+      }
+
+      const settings = await storage.getPaymentGatewaySettingsByGateway("COINBASE");
+      if (!settings?.enabled) {
+        return res.status(400).json({ message: "Coinbase payments are not enabled" });
+      }
+
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const charge = await createCoinbaseCharge({
+        amountCents,
+        currency: "USD",
+        name: "Work Digital Credits",
+        description: `Add $${(amountCents / 100).toFixed(2)} to your Work Digital wallet`,
+        redirectUrl: `${baseUrl}/wallet?payment=coinbase-success`,
+        cancelUrl: `${baseUrl}/wallet?payment=cancelled`,
+        metadata: {
+          userId,
+          amountCents: String(amountCents),
+        },
+      });
+
+      await createAuditLog(req, "PAYMENT_INITIATED", `Coinbase charge created: $${(amountCents / 100).toFixed(2)}`, userId, "coinbase_charge", charge.chargeId, {
+        amountCents: String(amountCents),
+      });
+
+      res.json({
+        chargeId: charge.chargeId,
+        hostedUrl: charge.hostedUrl,
+      });
+    } catch (error: any) {
+      console.error("Coinbase create charge error:", error);
+      res.status(500).json({ message: error.message || "Failed to create Coinbase charge" });
+    }
+  });
+
+  // Get Coinbase charge status
+  app.get("/api/billing/coinbase/charge/:chargeId", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { chargeId } = req.params;
+      const { getCoinbaseChargeStatus, isCoinbaseConfigured } = await import("./payments/coinbase-service");
+
+      if (!isCoinbaseConfigured()) {
+        return res.status(400).json({ message: "Coinbase is not configured" });
+      }
+
+      const status = await getCoinbaseChargeStatus(chargeId);
+      res.json(status);
+    } catch (error: any) {
+      console.error("Coinbase charge status error:", error);
+      res.status(500).json({ message: error.message || "Failed to get charge status" });
+    }
+  });
+
   // Get user's credit balance from ledger
   app.get("/api/billing/credits", authMiddleware, async (req: AuthRequest, res) => {
     try {
