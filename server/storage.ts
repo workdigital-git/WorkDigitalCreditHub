@@ -68,6 +68,9 @@ import {
   type InsertOauthAuditLog,
   type PaymentGatewaySettings,
   type InsertPaymentGatewaySettings,
+  merchantSettings,
+  type MerchantSettings,
+  type InsertMerchantSettings,
   type OAuthIdentity,
   type InsertOAuthIdentity,
   type Referral,
@@ -224,6 +227,10 @@ export interface IStorage {
   upsertPaymentGatewaySettings(settings: InsertPaymentGatewaySettings): Promise<PaymentGatewaySettings>;
   updatePaymentGatewaySettings(gateway: "STRIPE" | "PAYPAL" | "COINBASE", data: Partial<PaymentGatewaySettings>): Promise<PaymentGatewaySettings | undefined>;
   initializePaymentGateways(): Promise<void>;
+
+  getMerchantSettings(): Promise<MerchantSettings | undefined>;
+  updateMerchantSettings(data: Partial<MerchantSettings>): Promise<MerchantSettings>;
+  initializeMerchantSettings(): Promise<void>;
 
   getOAuthIdentityByProvider(provider: "REPLIT" | "GOOGLE", providerUserId: string): Promise<OAuthIdentity | undefined>;
   getOAuthIdentitiesByUserId(userId: string): Promise<OAuthIdentity[]>;
@@ -1218,6 +1225,43 @@ export class DatabaseStorage implements IStorage {
       if (!existing) {
         await db.insert(paymentGatewaySettings).values(gateway);
       }
+    }
+  }
+
+  async getMerchantSettings(): Promise<MerchantSettings | undefined> {
+    const [settings] = await db.select().from(merchantSettings).limit(1);
+    return settings || undefined;
+  }
+
+  async updateMerchantSettings(data: Partial<MerchantSettings>): Promise<MerchantSettings> {
+    const existing = await this.getMerchantSettings();
+    if (existing) {
+      const [updated] = await db
+        .update(merchantSettings)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(merchantSettings.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db
+      .insert(merchantSettings)
+      .values({
+        ...data,
+        id: randomUUID(),
+      } as InsertMerchantSettings)
+      .returning();
+    return created;
+  }
+
+  async initializeMerchantSettings(): Promise<void> {
+    const existing = await this.getMerchantSettings();
+    if (!existing) {
+      await db.insert(merchantSettings).values({
+        id: randomUUID(),
+        businessName: "Work Digital",
+        defaultCurrency: "USD",
+        statementDescriptor: "WORKDIGITAL",
+      });
     }
   }
 
