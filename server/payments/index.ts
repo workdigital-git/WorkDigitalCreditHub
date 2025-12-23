@@ -313,6 +313,7 @@ export async function getClientConfig(): Promise<{
 export {
   isStripeConfigured,
   getStripePublishableKey,
+  getStripeMode,
   createStripePaymentIntent,
   createStripeCustomer,
   createStripeSetupIntent,

@@ -61,5 +61,23 @@ The user interface adheres to a Stripe-inspired minimal aesthetic, using the Int
     - `bcrypt` for password hashing.
     - `zod` for request validation.
 - **OAuth2/OpenID Connect**: Standard-compliant implementation for SSO.
-- **Third-Party Services (Optional/Future Integration)**:
-    - Stripe (currently simulated, can be enabled with credentials).
+
+## Payment Gateways (Portable Configuration)
+
+All payment gateways support direct environment variable configuration for portability to other servers.
+
+### Stripe
+- **Replit Mode**: Uses Replit connector (automatic when running on Replit)
+- **Portable Mode**: Set `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` environment variables
+- Priority: Environment variables take precedence over Replit connector
+
+### PayPal
+- Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` environment variables
+- Optional: `PAYPAL_SANDBOX_USERNAME` and `PAYPAL_SANDBOX_PASSWORD` for testing
+
+### Coinbase Commerce
+- Set `COINBASE_COMMERCE_API_KEY` environment variable
+- Alternative (CDP): Set `COINBASE_API_KEYNAME` and `COINBASE_PRIVATE_KEY` for JWT auth
+
+### Enabling Gateways
+Gateways must be enabled by an admin in the Payment Gateways tab before users can use them.

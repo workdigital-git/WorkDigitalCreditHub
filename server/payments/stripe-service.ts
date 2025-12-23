@@ -2,8 +2,30 @@ import Stripe from "stripe";
 
 let stripeClient: Stripe | null = null;
 let connectionSettings: any = null;
+let credentialsSource: "env" | "replit" | null = null;
 
+/**
+ * Get Stripe credentials from environment variables or Replit connector.
+ * Priority: Direct environment variables first (for portability), then Replit connector.
+ * 
+ * For portable deployment, set these environment variables:
+ * - STRIPE_SECRET_KEY: Your Stripe secret key (sk_test_... or sk_live_...)
+ * - STRIPE_PUBLISHABLE_KEY: Your Stripe publishable key (pk_test_... or pk_live_...)
+ */
 async function getCredentials() {
+  // First, check for direct environment variables (portable mode)
+  const envSecretKey = process.env.STRIPE_SECRET_KEY;
+  const envPublishableKey = process.env.STRIPE_PUBLISHABLE_KEY;
+  
+  if (envSecretKey && envPublishableKey) {
+    credentialsSource = "env";
+    return {
+      publishableKey: envPublishableKey,
+      secretKey: envSecretKey,
+    };
+  }
+
+  // Fall back to Replit connector
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
     ? "repl " + process.env.REPL_IDENTITY
@@ -39,6 +61,7 @@ async function getCredentials() {
       return null;
     }
 
+    credentialsSource = "replit";
     return {
       publishableKey: connectionSettings.settings.publishable,
       secretKey: connectionSettings.settings.secret,
@@ -68,6 +91,10 @@ export async function getStripePublishableKey(): Promise<string | null> {
 export async function isStripeConfigured(): Promise<boolean> {
   const credentials = await getCredentials();
   return !!credentials;
+}
+
+export function getStripeMode(): "env" | "replit" | null {
+  return credentialsSource;
 }
 
 export interface StripePaymentResult {
