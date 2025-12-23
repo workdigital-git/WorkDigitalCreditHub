@@ -25,16 +25,22 @@ function getPayPalBaseUrl(sandboxMode: boolean): string {
 }
 
 export function isPayPalConfigured(): boolean {
-  return !!(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
+  const hasClientId = !!process.env.PAYPAL_CLIENT_ID;
+  const hasSecret = !!(process.env.PAYPAL_SECRET || process.env.PAYPAL_CLIENT_SECRET);
+  return hasClientId && hasSecret;
 }
 
 export function getPayPalClientId(): string | null {
   return process.env.PAYPAL_CLIENT_ID || null;
 }
 
+function getPayPalSecret(): string | null {
+  return process.env.PAYPAL_SECRET || process.env.PAYPAL_CLIENT_SECRET || null;
+}
+
 async function getPayPalAccessToken(sandboxMode: boolean): Promise<string | null> {
   const clientId = process.env.PAYPAL_CLIENT_ID;
-  const clientSecret = process.env.PAYPAL_CLIENT_SECRET;
+  const clientSecret = getPayPalSecret();
 
   if (!clientId || !clientSecret) {
     return null;
