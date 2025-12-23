@@ -2362,7 +2362,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         currency: "USD",
         name: "Work Digital Credits",
         description: `Add $${(amountCents / 100).toFixed(2)} to your Work Digital wallet`,
-        redirectUrl: `${baseUrl}/wallet?payment=coinbase-success`,
+        redirectUrl: `${baseUrl}/wallet?payment=success&gateway=coinbase`,
         cancelUrl: `${baseUrl}/wallet?payment=cancelled`,
         metadata: {
           userId,

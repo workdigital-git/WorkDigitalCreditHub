@@ -830,10 +830,12 @@ export default function WalletPage() {
 
     if (payment === "paypal-success" && paypalToken) {
       handlePayPalCapture(paypalToken);
-    } else if (payment === "success") {
+    } else if (payment === "success" || payment === "coinbase-success") {
       toast({
         title: "Payment successful!",
-        description: "Your credits have been added to your account.",
+        description: payment === "coinbase-success" 
+          ? "Your crypto payment has been received. Credits will be added once confirmed."
+          : "Your credits have been added to your account.",
       });
       // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
