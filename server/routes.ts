@@ -4479,6 +4479,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/admin/merchant-settings", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      let settings = await storage.getMerchantSettings();
+      if (!settings) {
+        await storage.initializeMerchantSettings();
+        settings = await storage.getMerchantSettings();
+      }
+      res.json(settings);
+    } catch (error) {
+      console.error("Get merchant settings error:", error);
+      res.status(500).json({ message: "Failed to get merchant settings" });
+    }
+  });
+
+  app.patch("/api/admin/merchant-settings", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { businessName, supportEmail, defaultCurrency, statementDescriptor, webhookUrl, logoUrl } = req.body;
+
+      const updateData: Record<string, any> = {};
+      if (typeof businessName === "string") updateData.businessName = businessName;
+      if (typeof supportEmail === "string" || supportEmail === null) updateData.supportEmail = supportEmail;
+      if (typeof defaultCurrency === "string") updateData.defaultCurrency = defaultCurrency;
+      if (typeof statementDescriptor === "string") updateData.statementDescriptor = statementDescriptor.toUpperCase().substring(0, 22);
+      if (typeof webhookUrl === "string" || webhookUrl === null) updateData.webhookUrl = webhookUrl;
+      if (typeof logoUrl === "string" || logoUrl === null) updateData.logoUrl = logoUrl;
+
+      const updated = await storage.updateMerchantSettings(updateData);
+
+      await createAuditLog(
+        req,
+        "ADMIN_ACTION",
+        "Updated merchant account settings",
+        req.user!.id,
+        "merchant_settings",
+        updated.id,
+        updateData
+      );
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Update merchant settings error:", error);
+      res.status(500).json({ message: "Failed to update merchant settings" });
+    }
+  });
+
   app.get("/api/payment-gateways/config", authMiddleware, async (req: AuthRequest, res) => {
     try {
       const { getClientConfig } = await import("./payments");
