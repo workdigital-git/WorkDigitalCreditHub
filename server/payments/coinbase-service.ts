@@ -1,3 +1,5 @@
+import * as crypto from "crypto";
+
 export interface CoinbaseChargeResult {
   success: boolean;
   chargeId?: string;
@@ -15,22 +17,84 @@ export interface CoinbaseChargeStatus {
 }
 
 export function isCoinbaseConfigured(): boolean {
-  return !!process.env.COINBASE_COMMERCE_API_KEY;
+  return !!(process.env.COINBASE_COMMERCE_API_KEY || 
+    (process.env.COINBASE_API_KEYNAME && process.env.COINBASE_PRIVATE_KEY));
 }
 
-const COINBASE_API_URL = "https://api.commerce.coinbase.com";
+export function getCoinbaseMode(): "commerce" | "cdp" | null {
+  if (process.env.COINBASE_COMMERCE_API_KEY) return "commerce";
+  if (process.env.COINBASE_API_KEYNAME && process.env.COINBASE_PRIVATE_KEY) return "cdp";
+  return null;
+}
 
-async function getCoinbaseHeaders(): Promise<Record<string, string> | null> {
-  const apiKey = process.env.COINBASE_COMMERCE_API_KEY;
-  if (!apiKey) {
+const COINBASE_COMMERCE_URL = "https://api.commerce.coinbase.com";
+const COINBASE_CDP_URL = "https://api.coinbase.com";
+
+function generateCDPJWT(): string | null {
+  const keyName = process.env.COINBASE_API_KEYNAME;
+  const privateKey = process.env.COINBASE_PRIVATE_KEY;
+  
+  if (!keyName || !privateKey) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "ES256", typ: "JWT", kid: keyName };
+  const payload = {
+    sub: keyName,
+    iss: "cdp",
+    aud: ["retail_rest_api_proxy"],
+    nbf: now,
+    exp: now + 120,
+  };
+
+  const base64url = (obj: any) => 
+    Buffer.from(JSON.stringify(obj)).toString("base64url");
+  
+  const headerB64 = base64url(header);
+  const payloadB64 = base64url(payload);
+  const message = `${headerB64}.${payloadB64}`;
+
+  try {
+    const formattedKey = privateKey.includes("-----BEGIN") 
+      ? privateKey 
+      : `-----BEGIN EC PRIVATE KEY-----\n${privateKey}\n-----END EC PRIVATE KEY-----`;
+    
+    const sign = crypto.createSign("SHA256");
+    sign.update(message);
+    const signature = sign.sign(formattedKey, "base64url");
+    
+    return `${message}.${signature}`;
+  } catch (error) {
+    console.error("Failed to generate CDP JWT:", error);
     return null;
   }
+}
 
-  return {
-    "Content-Type": "application/json",
-    "X-CC-Api-Key": apiKey,
-    "X-CC-Version": "2018-03-22",
-  };
+async function getCoinbaseHeaders(): Promise<{ headers: Record<string, string>; baseUrl: string } | null> {
+  const commerceKey = process.env.COINBASE_COMMERCE_API_KEY;
+  
+  if (commerceKey) {
+    return {
+      headers: {
+        "Content-Type": "application/json",
+        "X-CC-Api-Key": commerceKey,
+        "X-CC-Version": "2018-03-22",
+      },
+      baseUrl: COINBASE_COMMERCE_URL,
+    };
+  }
+
+  const jwt = generateCDPJWT();
+  if (jwt) {
+    return {
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${jwt}`,
+      },
+      baseUrl: COINBASE_CDP_URL,
+    };
+  }
+
+  return null;
 }
 
 export interface CreateCoinbaseChargeParams {
@@ -48,44 +112,76 @@ export async function createCoinbaseCharge(
 ): Promise<{ chargeId: string; hostedUrl: string }> {
   const { amountCents, currency = "USD", name, description, redirectUrl, cancelUrl, metadata } = params;
   
-  const headers = await getCoinbaseHeaders();
-  if (!headers) {
-    throw new Error("Coinbase Commerce not configured");
+  const config = await getCoinbaseHeaders();
+  if (!config) {
+    throw new Error("Coinbase not configured");
   }
 
   const amountValue = (amountCents / 100).toFixed(2);
+  const mode = getCoinbaseMode();
 
   try {
-    const response = await fetch(`${COINBASE_API_URL}/charges`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        name,
-        description,
-        pricing_type: "fixed_price",
-        local_price: {
-          amount: amountValue,
-          currency,
-        },
-        metadata: metadata || {},
-        redirect_url: redirectUrl,
-        cancel_url: cancelUrl,
-      }),
-    });
+    if (mode === "commerce") {
+      const response = await fetch(`${config.baseUrl}/charges`, {
+        method: "POST",
+        headers: config.headers,
+        body: JSON.stringify({
+          name,
+          description,
+          pricing_type: "fixed_price",
+          local_price: {
+            amount: amountValue,
+            currency,
+          },
+          metadata: metadata || {},
+          redirect_url: redirectUrl,
+          cancel_url: cancelUrl,
+        }),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("Coinbase charge creation error:", errorText);
-      throw new Error("Failed to create Coinbase charge");
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Coinbase Commerce charge creation error:", errorText);
+        throw new Error("Failed to create Coinbase charge");
+      }
+
+      const data = await response.json();
+      const charge = data.data;
+
+      return {
+        chargeId: charge.id,
+        hostedUrl: charge.hosted_url,
+      };
+    } else {
+      const response = await fetch(`${config.baseUrl}/v2/charges`, {
+        method: "POST",
+        headers: config.headers,
+        body: JSON.stringify({
+          name,
+          description,
+          pricing_type: "fixed_price",
+          local_price: {
+            amount: amountValue,
+            currency,
+          },
+          metadata: metadata || {},
+          redirect_url: redirectUrl,
+          cancel_url: cancelUrl,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Coinbase CDP charge creation error:", errorText);
+        throw new Error("Failed to create Coinbase charge");
+      }
+
+      const data = await response.json();
+      return {
+        chargeId: data.data?.id || data.id,
+        hostedUrl: data.data?.hosted_url || data.hosted_url,
+      };
     }
-
-    const data = await response.json();
-    const charge = data.data;
-
-    return {
-      chargeId: charge.id,
-      hostedUrl: charge.hosted_url,
-    };
   } catch (error: any) {
     console.error("Coinbase charge creation error:", error);
     throw new Error(error.message || "Failed to create Coinbase charge");
@@ -95,15 +191,20 @@ export async function createCoinbaseCharge(
 export async function getCoinbaseChargeStatus(
   chargeId: string
 ): Promise<CoinbaseChargeStatus> {
-  const headers = await getCoinbaseHeaders();
-  if (!headers) {
-    return { success: false, error: "Coinbase Commerce not configured" };
+  const config = await getCoinbaseHeaders();
+  if (!config) {
+    return { success: false, error: "Coinbase not configured" };
   }
 
+  const mode = getCoinbaseMode();
+  const endpoint = mode === "commerce" 
+    ? `${config.baseUrl}/charges/${chargeId}`
+    : `${config.baseUrl}/v2/charges/${chargeId}`;
+
   try {
-    const response = await fetch(`${COINBASE_API_URL}/charges/${chargeId}`, {
+    const response = await fetch(endpoint, {
       method: "GET",
-      headers,
+      headers: config.headers,
     });
 
     if (!response.ok) {
@@ -113,7 +214,7 @@ export async function getCoinbaseChargeStatus(
     }
 
     const data = await response.json();
-    const charge = data.data;
+    const charge = data.data || data;
 
     const lastStatus = charge.timeline?.[charge.timeline.length - 1]?.status;
 
@@ -132,15 +233,20 @@ export async function getCoinbaseChargeStatus(
 export async function cancelCoinbaseCharge(
   chargeId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const headers = await getCoinbaseHeaders();
-  if (!headers) {
-    return { success: false, error: "Coinbase Commerce not configured" };
+  const config = await getCoinbaseHeaders();
+  if (!config) {
+    return { success: false, error: "Coinbase not configured" };
   }
 
+  const mode = getCoinbaseMode();
+  const endpoint = mode === "commerce"
+    ? `${config.baseUrl}/charges/${chargeId}/cancel`
+    : `${config.baseUrl}/v2/charges/${chargeId}/cancel`;
+
   try {
-    const response = await fetch(`${COINBASE_API_URL}/charges/${chargeId}/cancel`, {
+    const response = await fetch(endpoint, {
       method: "POST",
-      headers,
+      headers: config.headers,
     });
 
     if (!response.ok) {

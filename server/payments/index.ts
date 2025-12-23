@@ -335,6 +335,7 @@ export {
 
 export {
   isCoinbaseConfigured,
+  getCoinbaseMode,
   createCoinbaseCharge,
   getCoinbaseChargeStatus,
   cancelCoinbaseCharge,
