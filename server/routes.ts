@@ -2100,6 +2100,222 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // PayPal Integration Routes
+  app.get("/api/billing/paypal/status", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { isPayPalConfigured, getPayPalClientId, getPayPalMode } = await import("./payments/paypal-service");
+      const configured = isPayPalConfigured();
+      const settings = await storage.getPaymentGatewaySettingsByGateway("PAYPAL");
+      
+      res.json({
+        configured,
+        enabled: settings?.enabled || false,
+        mode: getPayPalMode(),
+        clientId: configured ? getPayPalClientId() : null,
+      });
+    } catch (error) {
+      console.error("PayPal status error:", error);
+      res.status(500).json({ message: "Failed to get PayPal status" });
+    }
+  });
+
+  // Create PayPal checkout order
+  app.post("/api/billing/paypal/create-order", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { amountCents, savePaymentMethod } = req.body;
+      const userId = req.user!.id;
+
+      if (!amountCents || amountCents < 100) {
+        return res.status(400).json({ message: "Minimum amount is $1.00" });
+      }
+
+      const { createPayPalOrderWithVault, isPayPalConfigured } = await import("./payments/paypal-service");
+      
+      if (!isPayPalConfigured()) {
+        return res.status(400).json({ message: "PayPal is not configured" });
+      }
+
+      const settings = await storage.getPaymentGatewaySettingsByGateway("PAYPAL");
+      if (!settings?.enabled) {
+        return res.status(400).json({ message: "PayPal payments are not enabled" });
+      }
+
+      const baseUrl = `https://${process.env.REPLIT_DOMAINS?.split(",")[0] || "localhost:5000"}`;
+      
+      const result = await createPayPalOrderWithVault({
+        amountCents,
+        currency: "USD",
+        returnUrl: `${baseUrl}/wallet?payment=paypal-success`,
+        cancelUrl: `${baseUrl}/wallet?payment=cancel`,
+        description: "Add funds to your Work Digital Credits wallet",
+        sandboxMode: settings.sandboxMode,
+        vaultPayment: savePaymentMethod === true,
+        metadata: { userId },
+      });
+
+      res.json({
+        orderId: result.orderId,
+        approvalUrl: result.approvalUrl,
+      });
+    } catch (error: any) {
+      console.error("PayPal create order error:", error);
+      res.status(500).json({ message: error.message || "Failed to create PayPal order" });
+    }
+  });
+
+  // Capture PayPal order after approval
+  app.post("/api/billing/paypal/capture-order", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { orderId, savePaymentMethod } = req.body;
+      const userId = req.user!.id;
+
+      if (!orderId) {
+        return res.status(400).json({ message: "Order ID is required" });
+      }
+
+      const { capturePayPalOrderWithVault, isPayPalConfigured, getPayPalOrderDetails } = await import("./payments/paypal-service");
+      
+      if (!isPayPalConfigured()) {
+        return res.status(400).json({ message: "PayPal is not configured" });
+      }
+
+      const settings = await storage.getPaymentGatewaySettingsByGateway("PAYPAL");
+      const captureResult = await capturePayPalOrderWithVault(orderId, settings?.sandboxMode ?? true);
+
+      if (!captureResult.success) {
+        return res.status(400).json({ message: captureResult.error || "Failed to capture payment" });
+      }
+
+      // Get order details to find the amount
+      const orderDetails = await getPayPalOrderDetails(orderId, settings?.sandboxMode ?? true);
+      const amountValue = orderDetails.order?.purchase_units?.[0]?.amount?.value;
+      const amountCents = amountValue ? Math.round(parseFloat(amountValue) * 100) : 0;
+
+      if (amountCents > 0) {
+        // Get or create wallet
+        let wallet = await storage.getWalletByUserId(userId);
+        if (!wallet) {
+          wallet = await storage.createWallet(userId, "USD");
+        }
+
+        // Add credits to wallet via ledger
+        const idempotencyKey = `paypal-${orderId}`;
+        await storage.createWalletLedgerEntry({
+          walletId: wallet.id,
+          type: "CREDIT",
+          amountCents,
+          description: "Added funds via PayPal",
+          referenceType: "paypal_capture",
+          referenceId: captureResult.captureId || orderId,
+          idempotencyKey,
+        });
+
+        await createAuditLog(req, "PAYMENT_SUCCESS", `PayPal payment captured: $${(amountCents / 100).toFixed(2)}`, userId, "wallet", wallet.id, {
+          orderId,
+          captureId: captureResult.captureId,
+          amountCents: String(amountCents),
+        });
+      }
+
+      // If vault ID returned and user wants to save, create payment method
+      if (savePaymentMethod && captureResult.vaultId) {
+        const existingMethods = await storage.getPaymentMethodsByUserId(userId);
+        await storage.createPaymentMethod({
+          userId,
+          type: "PAYPAL",
+          provider: "PAYPAL",
+          externalId: captureResult.vaultId,
+          last4: captureResult.payerEmail?.slice(-4) || null,
+          brand: "PayPal",
+          nickname: captureResult.payerEmail || "PayPal Account",
+          isDefault: existingMethods.length === 0,
+        });
+
+        await createAuditLog(req, "PAYMENT_METHOD_ADD", "PayPal account saved", userId, "paymentMethod", captureResult.vaultId, {
+          email: captureResult.payerEmail,
+        });
+      }
+
+      res.json({
+        success: true,
+        captureId: captureResult.captureId,
+        amountCents,
+        vaultSaved: !!(savePaymentMethod && captureResult.vaultId),
+      });
+    } catch (error: any) {
+      console.error("PayPal capture order error:", error);
+      res.status(500).json({ message: error.message || "Failed to capture PayPal order" });
+    }
+  });
+
+  // Charge saved PayPal payment method
+  app.post("/api/billing/paypal/charge-saved", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { paymentMethodId, amountCents } = req.body;
+      const userId = req.user!.id;
+
+      if (!paymentMethodId || !amountCents || amountCents < 100) {
+        return res.status(400).json({ message: "Valid payment method and amount (min $1.00) required" });
+      }
+
+      const paymentMethod = await storage.getPaymentMethod(paymentMethodId);
+      if (!paymentMethod || paymentMethod.userId !== userId || paymentMethod.type !== "PAYPAL") {
+        return res.status(404).json({ message: "PayPal payment method not found" });
+      }
+
+      const { chargePayPalVault, isPayPalConfigured } = await import("./payments/paypal-service");
+      
+      if (!isPayPalConfigured()) {
+        return res.status(400).json({ message: "PayPal is not configured" });
+      }
+
+      const settings = await storage.getPaymentGatewaySettingsByGateway("PAYPAL");
+      const result = await chargePayPalVault(
+        paymentMethod.externalId,
+        amountCents,
+        "USD",
+        "Add funds to Work Digital Credits wallet",
+        settings?.sandboxMode ?? true
+      );
+
+      if (!result.success) {
+        return res.status(400).json({ message: result.error || "Failed to charge PayPal" });
+      }
+
+      // Add credits to wallet
+      let wallet = await storage.getWalletByUserId(userId);
+      if (!wallet) {
+        wallet = await storage.createWallet(userId, "USD");
+      }
+
+      const idempotencyKey = `paypal-vault-${result.captureId}`;
+      await storage.createWalletLedgerEntry({
+        walletId: wallet.id,
+        type: "CREDIT",
+        amountCents,
+        description: "Added funds via saved PayPal",
+        referenceType: "paypal_vault_charge",
+        referenceId: result.captureId || paymentMethodId,
+        idempotencyKey,
+      });
+
+      await createAuditLog(req, "PAYMENT_SUCCESS", `PayPal saved payment: $${(amountCents / 100).toFixed(2)}`, userId, "wallet", wallet.id, {
+        paymentMethodId,
+        captureId: result.captureId,
+        amountCents: String(amountCents),
+      });
+
+      res.json({
+        success: true,
+        captureId: result.captureId,
+        amountCents,
+      });
+    } catch (error: any) {
+      console.error("PayPal charge saved error:", error);
+      res.status(500).json({ message: error.message || "Failed to charge PayPal" });
+    }
+  });
+
   // Get user's credit balance from ledger
   app.get("/api/billing/credits", authMiddleware, async (req: AuthRequest, res) => {
     try {

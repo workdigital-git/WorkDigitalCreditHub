@@ -191,24 +191,25 @@ async function processPayPalPayment(
   const returnUrl = options.returnUrl || `${baseUrl}/wallet?payment=success&gateway=paypal`;
   const cancelUrl = options.cancelUrl || `${baseUrl}/wallet?payment=cancel&gateway=paypal`;
 
-  const result = await createPayPalOrder(
-    amountCents,
-    "USD",
-    settings.sandboxMode,
-    returnUrl,
-    cancelUrl,
-    options.description
-  );
+  try {
+    const result = await createPayPalOrder({
+      amountCents,
+      currency: "USD",
+      sandboxMode: settings.sandboxMode,
+      returnUrl,
+      cancelUrl,
+      description: options.description,
+      metadata: { userId },
+    });
 
-  if (result.success) {
     return {
       success: true,
       externalId: result.orderId,
       redirectUrl: result.approvalUrl,
     };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
-
-  return { success: false, error: result.error };
 }
 
 async function processCoinbasePayment(
@@ -230,25 +231,25 @@ async function processCoinbasePayment(
   const returnUrl = options.returnUrl || `${baseUrl}/wallet?payment=success&gateway=coinbase`;
   const cancelUrl = options.cancelUrl || `${baseUrl}/wallet?payment=cancel&gateway=coinbase`;
 
-  const result = await createCoinbaseCharge(
-    amountCents,
-    "USD",
-    "Wallet Funding",
-    options.description || "Add funds to your Work Digital Credits wallet",
-    returnUrl,
-    cancelUrl,
-    { userId, ...options.metadata }
-  );
+  try {
+    const result = await createCoinbaseCharge({
+      amountCents,
+      currency: "USD",
+      name: "Wallet Funding",
+      description: options.description || "Add funds to your Work Digital Credits wallet",
+      redirectUrl: returnUrl,
+      cancelUrl,
+      metadata: { userId, ...options.metadata },
+    });
 
-  if (result.success) {
     return {
       success: true,
       externalId: result.chargeId,
       redirectUrl: result.hostedUrl,
     };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
-
-  return { success: false, error: result.error };
 }
 
 export async function confirmPayment(
@@ -325,6 +326,11 @@ export {
   createPayPalOrder,
   capturePayPalOrder,
   getPayPalOrderDetails,
+  createPayPalOrderWithVault,
+  capturePayPalOrderWithVault,
+  chargePayPalVault,
+  deletePayPalVault,
+  getPayPalMode,
 } from "./paypal-service";
 
 export {
