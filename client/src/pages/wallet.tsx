@@ -787,13 +787,50 @@ export default function WalletPage() {
     queryKey: ["/api/wallet"],
   });
 
-  // Handle return from Stripe Checkout
+  // Handle return from payment gateways (Stripe, PayPal, Coinbase)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const payment = urlParams.get("payment");
-    const sessionId = urlParams.get("session_id");
+    const paypalToken = urlParams.get("token"); // PayPal order ID
 
-    if (payment === "success") {
+    const handlePayPalCapture = async (orderId: string) => {
+      try {
+        const response = await fetch("/api/billing/paypal/capture-order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ orderId, savePaymentMethod: false }),
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          toast({
+            title: "Payment successful!",
+            description: `Your credits have been added to your account.`,
+          });
+          refetch();
+        } else {
+          const error = await response.json();
+          toast({
+            title: "Payment failed",
+            description: error.message || "Unable to complete PayPal payment.",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        toast({
+          title: "Payment error",
+          description: "An error occurred while processing your PayPal payment.",
+          variant: "destructive",
+        });
+      }
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    };
+
+    if (payment === "paypal-success" && paypalToken) {
+      handlePayPalCapture(paypalToken);
+    } else if (payment === "success") {
       toast({
         title: "Payment successful!",
         description: "Your credits have been added to your account.",
@@ -802,7 +839,7 @@ export default function WalletPage() {
       window.history.replaceState({}, document.title, window.location.pathname);
       // Refresh to show updated balance
       refetch();
-    } else if (payment === "cancelled") {
+    } else if (payment === "cancelled" || payment === "cancel") {
       toast({
         title: "Payment cancelled",
         description: "Your payment was cancelled. No charges were made.",
