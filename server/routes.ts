@@ -2799,6 +2799,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.delete("/api/admin/users/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      if (id === req.user!.id) {
+        return res.status(400).json({ message: "You cannot delete your own account" });
+      }
+
+      const existingUser = await storage.getUser(id);
+      if (!existingUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const success = await storage.deleteUser(id);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to delete user" });
+      }
+
+      await createAuditLog(
+        req,
+        "ADMIN_USER_DELETE",
+        `Admin deleted user: ${existingUser.email}`,
+        req.user!.id,
+        "user",
+        id,
+        { deletedEmail: existingUser.email, deletedFullName: existingUser.fullName }
+      );
+
+      res.json({ success: true, message: "User deleted successfully" });
+    } catch (error) {
+      console.error("Admin delete user error:", error);
+      res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+
   app.get("/api/admin/email/status", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { checkEmailConfiguration } = await import("./email-service");

@@ -236,6 +236,32 @@ function UsersTab() {
     },
   });
 
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState(false);
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      return apiRequest("DELETE", `/api/admin/users/${userId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/stats"] });
+      toast({
+        title: "User deleted",
+        description: "The user has been permanently removed.",
+      });
+      setEditDialogOpen(false);
+      setSelectedUser(null);
+      setConfirmDeleteUser(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to delete user",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleOpenCreditDialog = (user: UserWithWallet) => {
     setSelectedUser(user);
     setCreditAmount("");
@@ -439,7 +465,7 @@ function UsersTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+      <Dialog open={editDialogOpen} onOpenChange={(open) => { setEditDialogOpen(open); if (!open) setConfirmDeleteUser(false); }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit User</DialogTitle>
@@ -501,6 +527,51 @@ function UsersTab() {
               {editMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Changes
             </Button>
+
+            <div className="pt-4 border-t">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-destructive">Danger Zone</p>
+                {!confirmDeleteUser ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-destructive hover:text-destructive border-destructive/50 hover:bg-destructive/10"
+                    onClick={() => setConfirmDeleteUser(true)}
+                    data-testid="button-delete-user"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete User
+                  </Button>
+                ) : (
+                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 space-y-2">
+                    <p className="text-sm text-destructive font-medium">Are you absolutely sure?</p>
+                    <p className="text-xs text-muted-foreground">
+                      This will permanently delete the user and all associated data. This action cannot be undone.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => selectedUser && deleteUserMutation.mutate(selectedUser.id)}
+                        disabled={deleteUserMutation.isPending}
+                        data-testid="button-confirm-delete-user"
+                      >
+                        {deleteUserMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Yes, Delete User
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setConfirmDeleteUser(false)}
+                        data-testid="button-cancel-delete-user"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
