@@ -132,6 +132,7 @@ export interface IStorage {
   getAllApps(): Promise<App[]>;
   createApp(app: Omit<App, "id" | "createdAt" | "updatedAt">): Promise<App>;
   updateApp(id: string, data: Partial<App>): Promise<App | undefined>;
+  deleteApp(id: string): Promise<boolean>;
 
   getAppSubscription(userId: string, appId: string): Promise<AppSubscription | undefined>;
   getAppSubscriptionById(id: string): Promise<AppSubscription | undefined>;
@@ -489,6 +490,11 @@ export class DatabaseStorage implements IStorage {
       .where(eq(apps.id, id))
       .returning();
     return updated || undefined;
+  }
+
+  async deleteApp(id: string): Promise<boolean> {
+    const result = await db.delete(apps).where(eq(apps.id, id)).returning();
+    return result.length > 0;
   }
 
   async getAppSubscription(userId: string, appId: string): Promise<AppSubscription | undefined> {

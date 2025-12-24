@@ -532,6 +532,7 @@ function AppsTab() {
     pricingModel: "",
   });
   const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const { data: apps, isLoading } = useQuery<App[]>({
     queryKey: ["/api/admin/apps"],
@@ -624,6 +625,25 @@ function AppsTab() {
     onError: (error) => {
       toast({
         title: "Failed to regenerate secret",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteAppMutation = useMutation({
+    mutationFn: async (appId: string) => {
+      return apiRequest("DELETE", `/api/admin/apps/${appId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/apps"] });
+      toast({ title: "App deleted", description: "The app has been permanently removed." });
+      setEditApp(null);
+      setConfirmDelete(false);
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to delete app",
         description: error instanceof Error ? error.message : "Please try again",
         variant: "destructive",
       });
@@ -1018,7 +1038,7 @@ function AppsTab() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editApp} onOpenChange={(open) => { if (!open) { setEditApp(null); setConfirmRegenerate(false); } }}>
+      <Dialog open={!!editApp} onOpenChange={(open) => { if (!open) { setEditApp(null); setConfirmRegenerate(false); setConfirmDelete(false); } }}>
         <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit App Settings</DialogTitle>
@@ -1270,6 +1290,51 @@ function AppsTab() {
               {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Save Changes
             </Button>
+
+            <div className="pt-4 border-t">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-destructive">Danger Zone</p>
+                {!confirmDelete ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-destructive hover:text-destructive border-destructive/50 hover:bg-destructive/10"
+                    onClick={() => setConfirmDelete(true)}
+                    data-testid="button-delete-app"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete App
+                  </Button>
+                ) : (
+                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 space-y-2">
+                    <p className="text-sm text-destructive font-medium">Are you absolutely sure?</p>
+                    <p className="text-xs text-muted-foreground">
+                      This will permanently delete the app and all associated data. This action cannot be undone.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => editApp && deleteAppMutation.mutate(editApp.id)}
+                        disabled={deleteAppMutation.isPending}
+                        data-testid="button-confirm-delete"
+                      >
+                        {deleteAppMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                        Yes, Delete App
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setConfirmDelete(false)}
+                        data-testid="button-cancel-delete"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

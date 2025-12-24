@@ -2989,6 +2989,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.delete("/api/admin/apps/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const { id } = req.params;
+
+      const existingApp = await storage.getApp(id);
+      if (!existingApp) {
+        return res.status(404).json({ message: "App not found" });
+      }
+
+      const success = await storage.deleteApp(id);
+      if (!success) {
+        return res.status(500).json({ message: "Failed to delete app" });
+      }
+
+      await storage.createAuditLog({
+        userId: req.user!.id,
+        eventType: "ADMIN_ACTION",
+        entityType: "APP",
+        entityId: id,
+        action: `Deleted app "${existingApp.name}"`,
+        details: JSON.stringify({ appName: existingApp.name, clientId: existingApp.clientId }),
+        ipAddress: req.ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      res.json({ success: true, message: "App deleted successfully" });
+    } catch (error) {
+      console.error("Delete app error:", error);
+      res.status(500).json({ message: "Failed to delete app" });
+    }
+  });
+
   app.post("/api/admin/apps/:id/regenerate-secret", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
