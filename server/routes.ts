@@ -2705,6 +2705,71 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.get("/api/admin/members", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const {
+        q,
+        balanceTier,
+        hasPaymentMethod,
+        isAdmin,
+        twoFactorEnabled,
+        registeredFrom,
+        registeredTo,
+        sortBy,
+        sortDir,
+        page,
+        pageSize,
+      } = req.query;
+
+      const filters: any = {};
+
+      if (q && typeof q === "string") {
+        filters.query = q;
+      }
+
+      if (balanceTier && ["zero", "low", "medium", "high"].includes(balanceTier as string)) {
+        filters.balanceTier = balanceTier as "zero" | "low" | "medium" | "high";
+      }
+
+      if (hasPaymentMethod !== undefined) {
+        filters.hasPaymentMethod = hasPaymentMethod === "true";
+      }
+
+      if (isAdmin !== undefined) {
+        filters.isAdmin = isAdmin === "true";
+      }
+
+      if (twoFactorEnabled !== undefined) {
+        filters.twoFactorEnabled = twoFactorEnabled === "true";
+      }
+
+      if (registeredFrom && typeof registeredFrom === "string") {
+        filters.registeredFrom = new Date(registeredFrom);
+      }
+
+      if (registeredTo && typeof registeredTo === "string") {
+        filters.registeredTo = new Date(registeredTo);
+      }
+
+      if (sortBy && ["email", "fullName", "balance", "createdAt", "paymentMethods"].includes(sortBy as string)) {
+        filters.sortBy = sortBy as "email" | "fullName" | "balance" | "createdAt" | "paymentMethods";
+      }
+
+      if (sortDir && ["asc", "desc"].includes(sortDir as string)) {
+        filters.sortDir = sortDir as "asc" | "desc";
+      }
+
+      filters.page = page ? Math.max(1, parseInt(page as string, 10)) : 1;
+      filters.pageSize = pageSize ? Math.min(100, Math.max(1, parseInt(pageSize as string, 10))) : 20;
+
+      const result = await storage.searchMembers(filters);
+      res.json(result);
+    } catch (error) {
+      console.error("Admin members search error:", error);
+      res.status(500).json({ message: "Failed to search members" });
+    }
+  });
+
   app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       console.log("[Admin Users] Fetching all users...");

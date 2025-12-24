@@ -579,6 +579,530 @@ function UsersTab() {
   );
 }
 
+interface MemberWithDetails {
+  id: string;
+  email: string;
+  fullName: string | null;
+  phone: string | null;
+  phoneVerified: boolean;
+  isAdmin: boolean;
+  twoFactorEnabled: boolean;
+  twoFactorMethod: string | null;
+  createdAt: string;
+  balanceCents: number;
+  paymentMethodCount: number;
+  hasPaymentMethod: boolean;
+}
+
+interface MemberSearchResult {
+  members: MemberWithDetails[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  stats: {
+    totalMembers: number;
+    zeroBalance: number;
+    withPaymentMethods: number;
+    withTwoFactor: number;
+  };
+}
+
+function MembersTab() {
+  const { toast } = useToast();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [sortBy, setSortBy] = useState<string>("createdAt");
+  const [sortDir, setSortDir] = useState<string>("desc");
+  
+  const [filters, setFilters] = useState({
+    balanceTier: "",
+    hasPaymentMethod: "",
+    isAdmin: "",
+    twoFactorEnabled: "",
+    registeredFrom: "",
+    registeredTo: "",
+  });
+
+  const [selectedMember, setSelectedMember] = useState<MemberWithDetails | null>(null);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [creditDialogOpen, setCreditDialogOpen] = useState(false);
+  const [creditAmount, setCreditAmount] = useState("");
+  const [creditReason, setCreditReason] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const buildQueryString = () => {
+    const params = new URLSearchParams();
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    if (filters.balanceTier && filters.balanceTier !== "all") params.set("balanceTier", filters.balanceTier);
+    if (filters.hasPaymentMethod && filters.hasPaymentMethod !== "all") params.set("hasPaymentMethod", filters.hasPaymentMethod);
+    if (filters.isAdmin && filters.isAdmin !== "all") params.set("isAdmin", filters.isAdmin);
+    if (filters.twoFactorEnabled && filters.twoFactorEnabled !== "all") params.set("twoFactorEnabled", filters.twoFactorEnabled);
+    if (filters.registeredFrom) params.set("registeredFrom", filters.registeredFrom);
+    if (filters.registeredTo) params.set("registeredTo", filters.registeredTo);
+    params.set("sortBy", sortBy);
+    params.set("sortDir", sortDir);
+    params.set("page", page.toString());
+    params.set("pageSize", pageSize.toString());
+    return params.toString();
+  };
+
+  const { data, isLoading, refetch } = useQuery<MemberSearchResult>({
+    queryKey: ["/api/admin/members", debouncedQuery, filters, sortBy, sortDir, page, pageSize],
+    queryFn: async () => {
+      const response = await fetch(`/api/admin/members?${buildQueryString()}`, {
+        credentials: "include",
+      });
+      if (!response.ok) throw new Error("Failed to fetch members");
+      return response.json();
+    },
+  });
+
+  const creditMutation = useMutation({
+    mutationFn: async () => {
+      const amountCents = Math.round(parseFloat(creditAmount) * 100);
+      return apiRequest("POST", "/api/admin/credit-user", {
+        userId: selectedMember?.id,
+        amountCents,
+        reason: creditReason || undefined,
+      });
+    },
+    onSuccess: () => {
+      refetch();
+      toast({
+        title: "Credits added",
+        description: `Successfully credited $${creditAmount} to ${selectedMember?.email}`,
+      });
+      setCreditDialogOpen(false);
+      setSelectedMember(null);
+      setCreditAmount("");
+      setCreditReason("");
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to credit user",
+        description: error instanceof Error ? error.message : "Please try again",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const clearFilters = () => {
+    setFilters({
+      balanceTier: "",
+      hasPaymentMethod: "",
+      isAdmin: "",
+      twoFactorEnabled: "",
+      registeredFrom: "",
+      registeredTo: "",
+    });
+    setSearchQuery("");
+    setPage(1);
+  };
+
+  const hasActiveFilters = Object.values(filters).some(v => v !== "") || searchQuery !== "";
+
+  const handleSort = (column: string) => {
+    if (sortBy === column) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(column);
+      setSortDir("desc");
+    }
+    setPage(1);
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Members Directory
+            </CardTitle>
+            <CardDescription>
+              Search and manage all registered members
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowFilters(!showFilters)}
+              data-testid="button-toggle-filters"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Filters
+              {hasActiveFilters && (
+                <Badge variant="secondary" className="ml-2">Active</Badge>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              data-testid="button-refresh-members"
+            >
+              <RefreshCw className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+
+        <div className="relative mt-4">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by email, name, or phone..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+            data-testid="input-member-search"
+          />
+        </div>
+
+        {showFilters && (
+          <div className="mt-4 p-4 border rounded-lg bg-muted/50 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Balance Tier</Label>
+                <Select
+                  value={filters.balanceTier}
+                  onValueChange={(v) => { setFilters({ ...filters, balanceTier: v }); setPage(1); }}
+                >
+                  <SelectTrigger data-testid="select-balance-tier">
+                    <SelectValue placeholder="All balances" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All balances</SelectItem>
+                    <SelectItem value="zero">$0 (Zero balance)</SelectItem>
+                    <SelectItem value="low">$0.01 - $100</SelectItem>
+                    <SelectItem value="medium">$100 - $1,000</SelectItem>
+                    <SelectItem value="high">$1,000+</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Payment Methods</Label>
+                <Select
+                  value={filters.hasPaymentMethod}
+                  onValueChange={(v) => { setFilters({ ...filters, hasPaymentMethod: v }); setPage(1); }}
+                >
+                  <SelectTrigger data-testid="select-payment-method">
+                    <SelectValue placeholder="All users" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All users</SelectItem>
+                    <SelectItem value="true">Has payment method</SelectItem>
+                    <SelectItem value="false">No payment method</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>2FA Status</Label>
+                <Select
+                  value={filters.twoFactorEnabled}
+                  onValueChange={(v) => { setFilters({ ...filters, twoFactorEnabled: v }); setPage(1); }}
+                >
+                  <SelectTrigger data-testid="select-2fa-status">
+                    <SelectValue placeholder="All users" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All users</SelectItem>
+                    <SelectItem value="true">2FA enabled</SelectItem>
+                    <SelectItem value="false">2FA disabled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>User Role</Label>
+                <Select
+                  value={filters.isAdmin}
+                  onValueChange={(v) => { setFilters({ ...filters, isAdmin: v }); setPage(1); }}
+                >
+                  <SelectTrigger data-testid="select-user-role">
+                    <SelectValue placeholder="All users" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All users</SelectItem>
+                    <SelectItem value="true">Admins only</SelectItem>
+                    <SelectItem value="false">Non-admins only</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Registered From</Label>
+                <Input
+                  type="date"
+                  value={filters.registeredFrom}
+                  onChange={(e) => { setFilters({ ...filters, registeredFrom: e.target.value }); setPage(1); }}
+                  data-testid="input-registered-from"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Registered To</Label>
+                <Input
+                  type="date"
+                  value={filters.registeredTo}
+                  onChange={(e) => { setFilters({ ...filters, registeredTo: e.target.value }); setPage(1); }}
+                  data-testid="input-registered-to"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-clear-filters">
+                Clear All Filters
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {data?.stats && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <div className="text-2xl font-bold">{data.stats.totalMembers}</div>
+              <div className="text-xs text-muted-foreground">Total Members</div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <div className="text-2xl font-bold">{data.stats.zeroBalance}</div>
+              <div className="text-xs text-muted-foreground">Zero Balance</div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <div className="text-2xl font-bold">{data.stats.withPaymentMethods}</div>
+              <div className="text-xs text-muted-foreground">With Payment Methods</div>
+            </div>
+            <div className="p-3 rounded-lg bg-muted/50 text-center">
+              <div className="text-2xl font-bold">{data.stats.withTwoFactor}</div>
+              <div className="text-xs text-muted-foreground">2FA Enabled</div>
+            </div>
+          </div>
+        )}
+      </CardHeader>
+
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-3">
+            {[...Array(5)].map((_, i) => (
+              <Skeleton key={i} className="h-16 w-full" />
+            ))}
+          </div>
+        ) : data?.members && data.members.length > 0 ? (
+          <>
+            <div className="rounded-md border overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead 
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort("email")}
+                    >
+                      Email {sortBy === "email" && (sortDir === "asc" ? "↑" : "↓")}
+                    </TableHead>
+                    <TableHead 
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort("fullName")}
+                    >
+                      Name {sortBy === "fullName" && (sortDir === "asc" ? "↑" : "↓")}
+                    </TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead 
+                      className="cursor-pointer hover:bg-muted/50 text-right"
+                      onClick={() => handleSort("balance")}
+                    >
+                      Balance {sortBy === "balance" && (sortDir === "asc" ? "↑" : "↓")}
+                    </TableHead>
+                    <TableHead 
+                      className="cursor-pointer hover:bg-muted/50 text-center"
+                      onClick={() => handleSort("paymentMethods")}
+                    >
+                      Pay Methods {sortBy === "paymentMethods" && (sortDir === "asc" ? "↑" : "↓")}
+                    </TableHead>
+                    <TableHead className="text-center">Status</TableHead>
+                    <TableHead 
+                      className="cursor-pointer hover:bg-muted/50"
+                      onClick={() => handleSort("createdAt")}
+                    >
+                      Registered {sortBy === "createdAt" && (sortDir === "asc" ? "↑" : "↓")}
+                    </TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.members.map((member) => (
+                    <TableRow key={member.id} data-testid={`row-member-${member.id}`}>
+                      <TableCell className="font-medium">{member.email}</TableCell>
+                      <TableCell>{member.fullName || "-"}</TableCell>
+                      <TableCell>
+                        {member.phone ? (
+                          <span className="flex items-center gap-1">
+                            {member.phone}
+                            {member.phoneVerified && (
+                              <CheckCircle className="h-3 w-3 text-green-500" />
+                            )}
+                          </span>
+                        ) : "-"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {formatCurrency(member.balanceCents)}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {member.paymentMethodCount > 0 ? (
+                          <Badge variant="secondary">{member.paymentMethodCount}</Badge>
+                        ) : (
+                          <Badge variant="outline">0</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {member.isAdmin && (
+                            <Badge variant="default" className="text-xs">Admin</Badge>
+                          )}
+                          {member.twoFactorEnabled && (
+                            <Badge variant="secondary" className="text-xs">
+                              <Shield className="h-3 w-3 mr-1" />
+                              2FA
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {new Date(member.createdAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSelectedMember(member);
+                              setCreditDialogOpen(true);
+                            }}
+                            data-testid={`button-credit-member-${member.id}`}
+                          >
+                            <DollarSign className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            asChild
+                          >
+                            <Link href={`/admin?tab=users&edit=${member.id}`} data-testid={`link-edit-member-${member.id}`}>
+                              <Edit className="h-4 w-4" />
+                            </Link>
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-muted-foreground">
+                Showing {((page - 1) * pageSize) + 1} to {Math.min(page * pageSize, data.total)} of {data.total} members
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  data-testid="button-prev-page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                <span className="text-sm">
+                  Page {page} of {data.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => p + 1)}
+                  disabled={page >= data.totalPages}
+                  data-testid="button-next-page"
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="text-center py-12 text-muted-foreground">
+            <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
+            <p>No members found matching your criteria</p>
+            {hasActiveFilters && (
+              <Button variant="link" onClick={clearFilters} className="mt-2">
+                Clear filters
+              </Button>
+            )}
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={creditDialogOpen} onOpenChange={setCreditDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Credit Member Account</DialogTitle>
+            <DialogDescription>
+              Add credits directly to {selectedMember?.email}'s wallet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Amount (USD)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={creditAmount}
+                onChange={(e) => setCreditAmount(e.target.value)}
+                placeholder="10.00"
+                data-testid="input-credit-amount"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Reason (optional)</Label>
+              <Input
+                value={creditReason}
+                onChange={(e) => setCreditReason(e.target.value)}
+                placeholder="Manual credit adjustment"
+                data-testid="input-credit-reason"
+              />
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => creditMutation.mutate()}
+              disabled={!creditAmount || isNaN(parseFloat(creditAmount)) || parseFloat(creditAmount) <= 0 || creditMutation.isPending}
+              data-testid="button-confirm-credit"
+            >
+              {creditMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Add ${(!creditAmount || isNaN(parseFloat(creditAmount))) ? "0.00" : parseFloat(creditAmount).toFixed(2)} Credits
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 function AppsTab() {
   const { toast } = useToast();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -4905,7 +5429,7 @@ function ReferralsTab() {
 
 export default function AdminPage() {
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState("users");
+  const [activeTab, setActiveTab] = useState("members");
 
   const { data: stats, isLoading: statsLoading } = useQuery<AdminStats>({
     queryKey: ["/api/admin/stats"],
@@ -4932,6 +5456,10 @@ export default function AdminPage() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="flex-wrap">
+            <TabsTrigger value="members" className="gap-2" data-testid="tab-members">
+              <Search className="h-4 w-4" />
+              Members
+            </TabsTrigger>
             <TabsTrigger value="users" className="gap-2" data-testid="tab-users">
               <Users className="h-4 w-4" />
               Users
@@ -4969,6 +5497,10 @@ export default function AdminPage() {
               Referrals
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="members">
+            <MembersTab />
+          </TabsContent>
 
           <TabsContent value="users">
             <UsersTab />

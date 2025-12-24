@@ -93,8 +93,51 @@ import {
   type InsertCheckoutSession,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, or, ilike, gte, lte, count, isNull, isNotNull, asc } from "drizzle-orm";
 import { randomUUID } from "crypto";
+
+export interface MemberSearchFilters {
+  query?: string;
+  balanceTier?: "zero" | "low" | "medium" | "high";
+  hasPaymentMethod?: boolean;
+  isAdmin?: boolean;
+  twoFactorEnabled?: boolean;
+  registeredFrom?: Date;
+  registeredTo?: Date;
+  sortBy?: "email" | "fullName" | "balance" | "createdAt" | "paymentMethods";
+  sortDir?: "asc" | "desc";
+  page?: number;
+  pageSize?: number;
+}
+
+export interface MemberWithDetails {
+  id: string;
+  email: string;
+  fullName: string | null;
+  phone: string | null;
+  phoneVerified: boolean;
+  isAdmin: boolean;
+  twoFactorEnabled: boolean;
+  twoFactorMethod: string | null;
+  createdAt: Date;
+  balanceCents: number;
+  paymentMethodCount: number;
+  hasPaymentMethod: boolean;
+}
+
+export interface MemberSearchResult {
+  members: MemberWithDetails[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  stats: {
+    totalMembers: number;
+    zeroBalance: number;
+    withPaymentMethods: number;
+    withTwoFactor: number;
+  };
+}
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -103,6 +146,7 @@ export interface IStorage {
   updateUser(id: string, data: Partial<User>): Promise<User | undefined>;
   deleteUser(id: string): Promise<boolean>;
   getAllUsers(): Promise<User[]>;
+  searchMembers(filters: MemberSearchFilters): Promise<MemberSearchResult>;
 
   getWallet(id: string): Promise<Wallet | undefined>;
   getWalletByUserId(userId: string): Promise<Wallet | undefined>;
@@ -320,6 +364,178 @@ export class DatabaseStorage implements IStorage {
 
   async getAllUsers(): Promise<User[]> {
     return db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async searchMembers(filters: MemberSearchFilters): Promise<MemberSearchResult> {
+    const page = filters.page || 1;
+    const pageSize = Math.min(filters.pageSize || 20, 100);
+    const offset = (page - 1) * pageSize;
+
+    const conditions: any[] = [];
+
+    if (filters.query) {
+      const searchTerm = `%${filters.query.toLowerCase()}%`;
+      conditions.push(
+        or(
+          ilike(users.email, searchTerm),
+          ilike(users.fullName, searchTerm),
+          ilike(users.phone, searchTerm)
+        )
+      );
+    }
+
+    if (filters.isAdmin !== undefined) {
+      conditions.push(eq(users.isAdmin, filters.isAdmin));
+    }
+
+    if (filters.twoFactorEnabled !== undefined) {
+      conditions.push(eq(users.twoFactorEnabled, filters.twoFactorEnabled));
+    }
+
+    if (filters.registeredFrom) {
+      conditions.push(gte(users.createdAt, filters.registeredFrom));
+    }
+
+    if (filters.registeredTo) {
+      conditions.push(lte(users.createdAt, filters.registeredTo));
+    }
+
+    const baseQuery = db
+      .select({
+        id: users.id,
+        email: users.email,
+        fullName: users.fullName,
+        phone: users.phone,
+        phoneVerified: users.phoneVerified,
+        isAdmin: users.isAdmin,
+        twoFactorEnabled: users.twoFactorEnabled,
+        twoFactorMethod: users.twoFactorMethod,
+        createdAt: users.createdAt,
+        balanceCents: sql<number>`COALESCE(${wallets.balanceCents}, 0)`.as("balance_cents"),
+        paymentMethodCount: sql<number>`COUNT(DISTINCT ${paymentMethods.id})`.as("payment_method_count"),
+      })
+      .from(users)
+      .leftJoin(wallets, eq(users.id, wallets.userId))
+      .leftJoin(paymentMethods, eq(users.id, paymentMethods.userId))
+      .groupBy(users.id, wallets.balanceCents);
+
+    let queryWithConditions = conditions.length > 0 
+      ? baseQuery.where(and(...conditions))
+      : baseQuery;
+
+    const countResult = await db
+      .select({ count: sql<number>`COUNT(DISTINCT ${users.id})` })
+      .from(users)
+      .leftJoin(wallets, eq(users.id, wallets.userId))
+      .leftJoin(paymentMethods, eq(users.id, paymentMethods.userId))
+      .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+    const total = Number(countResult[0]?.count || 0);
+
+    let havingConditions: any[] = [];
+    
+    if (filters.balanceTier) {
+      switch (filters.balanceTier) {
+        case "zero":
+          havingConditions.push(sql`COALESCE(${wallets.balanceCents}, 0) = 0`);
+          break;
+        case "low":
+          havingConditions.push(sql`COALESCE(${wallets.balanceCents}, 0) > 0 AND COALESCE(${wallets.balanceCents}, 0) <= 10000`);
+          break;
+        case "medium":
+          havingConditions.push(sql`COALESCE(${wallets.balanceCents}, 0) > 10000 AND COALESCE(${wallets.balanceCents}, 0) <= 100000`);
+          break;
+        case "high":
+          havingConditions.push(sql`COALESCE(${wallets.balanceCents}, 0) > 100000`);
+          break;
+      }
+    }
+
+    if (filters.hasPaymentMethod !== undefined) {
+      if (filters.hasPaymentMethod) {
+        havingConditions.push(sql`COUNT(DISTINCT ${paymentMethods.id}) > 0`);
+      } else {
+        havingConditions.push(sql`COUNT(DISTINCT ${paymentMethods.id}) = 0`);
+      }
+    }
+
+    let sortColumn: any = users.createdAt;
+    let sortDirection = filters.sortDir === "asc" ? asc : desc;
+
+    switch (filters.sortBy) {
+      case "email":
+        sortColumn = users.email;
+        break;
+      case "fullName":
+        sortColumn = users.fullName;
+        break;
+      case "balance":
+        sortColumn = sql`COALESCE(${wallets.balanceCents}, 0)`;
+        break;
+      case "createdAt":
+        sortColumn = users.createdAt;
+        break;
+      case "paymentMethods":
+        sortColumn = sql`COUNT(DISTINCT ${paymentMethods.id})`;
+        break;
+    }
+
+    let finalQuery: any = queryWithConditions;
+    
+    if (havingConditions.length > 0) {
+      finalQuery = finalQuery.having(sql.join(havingConditions, sql` AND `));
+    }
+
+    const rawMembers = await finalQuery
+      .orderBy(sortDirection(sortColumn))
+      .limit(pageSize)
+      .offset(offset);
+
+    const members: MemberWithDetails[] = rawMembers.map((m: any) => ({
+      id: m.id,
+      email: m.email,
+      fullName: m.fullName,
+      phone: m.phone,
+      phoneVerified: m.phoneVerified,
+      isAdmin: m.isAdmin,
+      twoFactorEnabled: m.twoFactorEnabled,
+      twoFactorMethod: m.twoFactorMethod,
+      createdAt: m.createdAt,
+      balanceCents: Number(m.balanceCents) || 0,
+      paymentMethodCount: Number(m.paymentMethodCount) || 0,
+      hasPaymentMethod: Number(m.paymentMethodCount) > 0,
+    }));
+
+    const statsResult = await db
+      .select({
+        totalMembers: sql<number>`COUNT(DISTINCT ${users.id})`,
+        zeroBalance: sql<number>`COUNT(DISTINCT CASE WHEN COALESCE(${wallets.balanceCents}, 0) = 0 THEN ${users.id} END)`,
+        withTwoFactor: sql<number>`COUNT(DISTINCT CASE WHEN ${users.twoFactorEnabled} = true THEN ${users.id} END)`,
+      })
+      .from(users)
+      .leftJoin(wallets, eq(users.id, wallets.userId));
+
+    const pmStatsResult = await db
+      .select({
+        withPaymentMethods: sql<number>`COUNT(DISTINCT ${paymentMethods.userId})`,
+      })
+      .from(paymentMethods);
+
+    const stats = {
+      totalMembers: Number(statsResult[0]?.totalMembers || 0),
+      zeroBalance: Number(statsResult[0]?.zeroBalance || 0),
+      withPaymentMethods: Number(pmStatsResult[0]?.withPaymentMethods || 0),
+      withTwoFactor: Number(statsResult[0]?.withTwoFactor || 0),
+    };
+
+    return {
+      members,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.ceil(total / pageSize),
+      stats,
+    };
   }
 
   async getWallet(id: string): Promise<Wallet | undefined> {
