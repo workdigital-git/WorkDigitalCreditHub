@@ -1,83 +1,66 @@
-# Membership & Credits Hub
+# Work Digital Client Credit Portal
 
-## Overview
+> **Full Documentation**: See [SYSTEM_DOCUMENTATION.md](./SYSTEM_DOCUMENTATION.md) for complete technical reference.
 
-This project is a standalone, full-stack membership and billing platform designed to manage users, authentication, 2FA, wallets/credits, funding sources, auto-topups, and app subscriptions. Its core purpose is to provide Single Sign-On (SSO) authentication, manage credit balance checks, and handle billing/debits across integrated applications. It serves as a foundational platform for other applications to plug into for user and billing management.
+## Quick Start
 
-## User Preferences
+This is a full-stack membership and billing platform providing SSO authentication, credit management, and multi-gateway payment processing for Work Digital services.
 
-- Design follows Stripe-inspired minimal aesthetic
-- Inter font family for typography
+### Running the Application
+
+```bash
+npm run dev
+```
+
+The application starts an Express backend and Vite frontend on port 5000.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `shared/schema.ts` | Database schema + Zod validation |
+| `server/routes.ts` | API endpoints |
+| `server/storage.ts` | Database operations |
+| `client/src/pages/` | React page components |
+| `client/src/lib/auth.tsx` | Authentication context |
+
+### Environment Variables
+
+**Required:**
+- `DATABASE_URL` - PostgreSQL connection
+- `SESSION_SECRET` - Session encryption
+
+**Payment Gateways:**
+- `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY` - Stripe
+- `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET` - PayPal
+- `COINBASE_COMMERCE_API_KEY` - Coinbase
+
+**Services:**
+- `RESEND_API_KEY` - Email service
+- `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_PHONE_NUMBER` - SMS 2FA
+
+### Tech Stack
+
+- **Backend**: Node.js, Express, TypeScript, Drizzle ORM, PostgreSQL
+- **Frontend**: React, Vite, TanStack Query, Shadcn UI, Tailwind CSS
+- **Auth**: JWT with 2FA (TOTP/SMS), OAuth2/OIDC
+
+### Design Guidelines
+
+- Stripe-inspired minimal aesthetic
+- Inter font family
 - Blue primary color scheme
-- Subtle shadows and borders for card elements
+- Subtle shadows and borders
 
-## System Architecture
+## Documentation Links
 
-The platform is built with a clear separation between frontend and backend.
-
-### UI/UX Decisions
-The user interface adheres to a Stripe-inspired minimal aesthetic, using the Inter font family for typography and a blue primary color scheme. Design elements incorporate subtle shadows and borders for card components, ensuring a clean and modern look. It supports dark/light themes and is designed to be responsive across devices.
-
-### Technical Implementations
-- **Authentication**: JWT-based authentication with access/refresh tokens, supporting Two-Factor Authentication (TOTP and SMS via Plivo).
-- **Wallet Management**: Manages user credit balances, transaction history, multiple payment methods, and auto-topup rules.
-- **App Integration**: Features an app registry with SSO capabilities (OAuth2/OpenID Connect + PKCE), allowing external applications to integrate for user authentication and credit operations.
-- **API Keys**: Supports both user-level API keys for programmatic access and app-level API keys for B2B integrations.
-- **Admin Panel**: Role-based administration for managing users, apps, platform statistics, and referral program settings.
-- **Auto-Topup System**: Automatically funds user wallets when balances fall below a configured threshold, triggered by external debits.
-- **Audit Logging**: Comprehensive logging for financial transactions and authentication events, viewable by both users and administrators.
-- **Webhook Event System**: Handles payment status updates and other events with retry logic and status tracking.
-- **Background Job Processor**: Manages scheduled operations like auto-topup checks, webhook retries, and subscription billing.
-- **Subscription Billing System**: Supports recurring billing for app subscriptions with various cycles (monthly, yearly, per-use) and manages subscription statuses.
-- **SMS 2FA System**: Implements phone number verification and SMS-based 2FA using Plivo, with security features like E.164 formatting, rate limiting, and OTP expiration.
-- **Referral System**: User referral program with unique shareable codes, welcome bonuses for new users, referrer rewards when referred users fund above threshold, and admin-configurable settings (qualification threshold, bonus amounts, expiration days).
-
-### Feature Specifications
-- JWT-based authentication with access/refresh tokens.
-- Two-Factor Authentication (TOTP and SMS).
-- Wallet management with transaction history and multiple payment methods.
-- Auto-topup rules.
-- App registry with SSO capabilities (OAuth2/OpenID Connect).
-- API key generation for users and apps.
-- Role-based admin panel.
-- Dark/Light theme support and responsive design.
-- Referral program with shareable codes and configurable rewards.
-
-### System Design Choices
-- **Backend**: Node.js with TypeScript, Express for HTTP API, Drizzle ORM with PostgreSQL. Utilizes JWT for auth, bcrypt for password hashing, and Zod for validation.
-- **Frontend**: React with Vite, TypeScript, TanStack Query for data fetching, Shadcn UI components, Tailwind CSS for styling, and Wouter for routing.
-- **Database**: PostgreSQL, with Drizzle ORM for schema management.
-
-## External Dependencies
-
-- **Database**: PostgreSQL (Neon-backed).
-- **SMS Gateway**: Plivo (for SMS 2FA).
-- **UI Components**: Shadcn UI.
-- **Styling**: Tailwind CSS.
-- **Data Fetching**: TanStack Query (React Query).
-- **Libraries**:
-    - `speakeasy` for TOTP 2FA.
-    - `qrcode` for 2FA QR code generation.
-    - `bcrypt` for password hashing.
-    - `zod` for request validation.
-- **OAuth2/OpenID Connect**: Standard-compliant implementation for SSO.
-
-## Payment Gateways (Portable Configuration)
-
-All payment gateways support direct environment variable configuration for portability to other servers.
-
-### Stripe
-- **Replit Mode**: Uses Replit connector (automatic when running on Replit)
-- **Portable Mode**: Set `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` environment variables
-- Priority: Environment variables take precedence over Replit connector
-
-### PayPal
-- Set `PAYPAL_CLIENT_ID` and `PAYPAL_SECRET` environment variables
-- Optional: `PAYPAL_SANDBOX_USERNAME` and `PAYPAL_SANDBOX_PASSWORD` for testing
-
-### Coinbase Commerce
-- Set `COINBASE_COMMERCE_API_KEY` environment variable
-- Alternative (CDP): Set `COINBASE_API_KEYNAME` and `COINBASE_PRIVATE_KEY` for JWT auth
-
-### Enabling Gateways
-Gateways must be enabled by an admin in the Payment Gateways tab before users can use them.
+- [System Architecture](./SYSTEM_DOCUMENTATION.md#architecture)
+- [Authentication System](./SYSTEM_DOCUMENTATION.md#authentication-system)
+- [Payment Integration](./SYSTEM_DOCUMENTATION.md#payment-gateway-integration)
+- [OAuth2/SSO](./SYSTEM_DOCUMENTATION.md#oauth2sso-system)
+- [B2B API](./SYSTEM_DOCUMENTATION.md#b2b-integration-api)
+- [Admin Panel](./SYSTEM_DOCUMENTATION.md#admin-panel)
+- [Database Schema](./SYSTEM_DOCUMENTATION.md#database-schema)
+- [API Reference](./SYSTEM_DOCUMENTATION.md#api-reference)
+- [Environment Variables](./SYSTEM_DOCUMENTATION.md#environment-variables)
+- [Deployment Guide](./SYSTEM_DOCUMENTATION.md#deployment-guide)
