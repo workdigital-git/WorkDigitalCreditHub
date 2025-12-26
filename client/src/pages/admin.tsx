@@ -49,6 +49,7 @@ import {
   Check,
   Loader2,
   Eye,
+  EyeOff,
   DollarSign,
   Key,
   Trash2,
@@ -87,6 +88,7 @@ interface AppApiKey {
   appSlug: string;
   name: string;
   keyPrefix: string;
+  keyPlaintext: string | null;
   scopes: string[];
   lastUsedAt: string | null;
   expiresAt: string | null;
@@ -3181,8 +3183,10 @@ function AppApiKeysTab() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newKeyDialogOpen, setNewKeyDialogOpen] = useState(false);
   const [copiedKey, setCopiedKey] = useState(false);
+  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
   const [newApiKey, setNewApiKey] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [revealedKeyId, setRevealedKeyId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     appId: "",
@@ -3387,7 +3391,7 @@ function AppApiKeysTab() {
                 <TableRow>
                   <TableHead>App</TableHead>
                   <TableHead>Key Name</TableHead>
-                  <TableHead>Key Prefix</TableHead>
+                  <TableHead>API Key</TableHead>
                   <TableHead>Scopes</TableHead>
                   <TableHead>Last Used</TableHead>
                   <TableHead>Expires</TableHead>
@@ -3405,7 +3409,55 @@ function AppApiKeysTab() {
                     </TableCell>
                     <TableCell>{key.name}</TableCell>
                     <TableCell>
-                      <code className="text-xs bg-muted px-2 py-1 rounded">{key.keyPrefix}...</code>
+                      <div className="flex items-center gap-2">
+                        {revealedKeyId === key.id && key.keyPlaintext ? (
+                          <>
+                            <code className="text-xs bg-muted px-2 py-1 rounded font-mono max-w-[200px] truncate" title={key.keyPlaintext}>
+                              {key.keyPlaintext}
+                            </code>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => {
+                                navigator.clipboard.writeText(key.keyPlaintext || "");
+                                setCopiedKeyId(key.id);
+                                setTimeout(() => setCopiedKeyId(null), 2000);
+                                toast({ title: "API key copied to clipboard" });
+                              }}
+                              data-testid={`button-copy-key-${key.id}`}
+                            >
+                              {copiedKeyId === key.id ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => setRevealedKeyId(null)}
+                              data-testid={`button-hide-key-${key.id}`}
+                            >
+                              <EyeOff className="h-3 w-3" />
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <code className="text-xs bg-muted px-2 py-1 rounded">{key.keyPrefix}...</code>
+                            {key.keyPlaintext ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => setRevealedKeyId(key.id)}
+                                data-testid={`button-reveal-key-${key.id}`}
+                              >
+                                <Eye className="h-3 w-3" />
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">(legacy)</span>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
