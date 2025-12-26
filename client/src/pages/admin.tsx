@@ -1631,6 +1631,64 @@ function AppsTab() {
               <Label className="text-xs text-muted-foreground">Callback URL (configured)</Label>
               <Input value={viewCredentials?.callbackUrl || ""} readOnly className="text-sm" />
             </div>
+
+            <div className="pt-4 border-t space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">API Response Structure</Label>
+                <Badge variant="outline" className="text-xs">Reference</Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                When your app exchanges an authorization code for tokens, Credits Hub returns this JSON structure:
+              </p>
+              
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Token Response (POST /api/oauth/token)</Label>
+                <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto font-mono">
+{`{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "openid profile credits",
+  "user": {
+    "id": "uuid-string",
+    "email": "user@example.com",
+    "fullName": "John Doe"
+  }
+}`}
+                </pre>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Variable Mapping for Your App</Label>
+                <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="font-mono text-muted-foreground">access_token</div>
+                    <div>Store securely, use in Authorization header</div>
+                    <div className="font-mono text-muted-foreground">expires_in</div>
+                    <div>Token lifetime in seconds (3600 = 1 hour)</div>
+                    <div className="font-mono text-muted-foreground">user.id</div>
+                    <div>Unique user identifier (UUID)</div>
+                    <div className="font-mono text-muted-foreground">user.email</div>
+                    <div>User's email address</div>
+                    <div className="font-mono text-muted-foreground">user.fullName</div>
+                    <div>User's display name (may be null)</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-xs font-medium">Using the Access Token</Label>
+                <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto font-mono">
+{`// Include in API requests
+fetch('https://workdigitalcredithub.com/api/b2b/balance', {
+  headers: {
+    'Authorization': 'Bearer ' + access_token,
+    'X-App-ID': '${viewCredentials?.clientId || 'YOUR_CLIENT_ID'}'
+  }
+})`}
+                </pre>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
