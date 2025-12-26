@@ -324,6 +324,7 @@ export const appApiKeys = pgTable("app_api_keys", {
   name: text("name").notNull(),
   keyHash: text("key_hash").notNull(),
   keyPrefix: text("key_prefix").notNull(),
+  keyPlaintext: text("key_plaintext"),
   scopes: text("scopes").array().default([]).notNull(),
   lastUsedAt: timestamp("last_used_at"),
   expiresAt: timestamp("expires_at"),

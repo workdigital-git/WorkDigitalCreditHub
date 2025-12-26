@@ -3249,6 +3249,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         appSlug: k.app.slug,
         name: k.name,
         keyPrefix: k.keyPrefix,
+        keyPlaintext: k.keyPlaintext,
         scopes: k.scopes,
         lastUsedAt: k.lastUsedAt,
         expiresAt: k.expiresAt,
@@ -3287,6 +3288,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         name,
         keyHash,
         keyPrefix,
+        keyPlaintext: rawKey,
         scopes: scopes || ["balance:read", "credits:debit"],
         expiresAt,
       });
