@@ -341,18 +341,17 @@ async function checkUserBalance(userEmail) {
 }
 
 // Usage
-const { balance, user_id, trace_id } = await checkUserBalance('user@example.com');
-console.log(`User has ${balance} credits available`);
+const { balance_cents, currency, subscription_status } = await checkUserBalance('user@example.com');
+console.log(`User has ${balance_cents / 100} ${currency} credits available`);
 ```
 
 **Response (Success - HTTP 200):**
 ```json
 {
-  "success": true,
-  "balance": 150.00,
-  "user_id": "uuid-here",
   "user_email": "user@example.com",
-  "trace_id": "abc123xyz"
+  "balance_cents": 15000,
+  "currency": "USD",
+  "subscription_status": "ACTIVE"
 }
 ```
 
@@ -362,7 +361,7 @@ console.log(`User has ${balance} credits available`);
 
 **Request:**
 ```javascript
-async function debitUserCredits(userEmail, amount, description) {
+async function debitUserCredits(userEmail, amountCents, description) {
   const response = await fetch(`${process.env.CREDITS_HUB_URL}/api/v2/debit`, {
     method: 'POST',
     headers: {
@@ -371,7 +370,7 @@ async function debitUserCredits(userEmail, amount, description) {
     },
     body: JSON.stringify({
       user_email: userEmail,
-      amount: amount,
+      amount_cents: amountCents,
       description: description
     })
   });
@@ -383,20 +382,20 @@ async function debitUserCredits(userEmail, amount, description) {
   return data;
 }
 
-// Usage
-const result = await debitUserCredits('user@example.com', 5.00, 'Generated 1 AI image');
-console.log(`New balance: ${result.new_balance}`);
+// Usage - debit 500 cents ($5.00)
+const result = await debitUserCredits('user@example.com', 500, 'Generated 1 AI image');
+console.log(`New balance: $${result.new_balance_cents / 100}`);
 ```
 
 **Response (Success - HTTP 200):**
 ```json
 {
   "success": true,
-  "transaction_id": "txn_xxxxx",
-  "amount_debited": 5.00,
-  "new_balance": 145.00,
+  "transaction_id": "uuid-string",
+  "amount_cents": 500,
+  "new_balance_cents": 14500,
   "user_email": "user@example.com",
-  "trace_id": "abc123xyz"
+  "app_name": "Your App Name"
 }
 ```
 
@@ -405,9 +404,8 @@ console.log(`New balance: ${result.new_balance}`);
 {
   "error": "insufficient_balance",
   "message": "Insufficient balance",
-  "current_balance": 3.00,
-  "required_amount": 5.00,
-  "trace_id": "abc123xyz"
+  "current_balance_cents": 300,
+  "required_amount_cents": 500
 }
 ```
 
@@ -439,13 +437,12 @@ class CreditsHubClient {
     if (!response.ok) {
       const error = new Error(data.message || data.error || 'Balance check failed');
       error.code = data.error;
-      error.traceId = data.trace_id;
       throw error;
     }
     return data;
   }
 
-  async debit(userEmail, amount, description) {
+  async debit(userEmail, amountCents, description) {
     const response = await fetch(`${CREDITS_HUB_URL}/api/v2/debit`, {
       method: 'POST',
       headers: {
@@ -454,7 +451,7 @@ class CreditsHubClient {
       },
       body: JSON.stringify({
         user_email: userEmail,
-        amount: amount,
+        amount_cents: amountCents,
         description: description
       })
     });
@@ -463,22 +460,21 @@ class CreditsHubClient {
     if (!response.ok) {
       const error = new Error(data.message || data.error || 'Debit failed');
       error.code = data.error;
-      error.traceId = data.trace_id;
-      error.currentBalance = data.current_balance;
+      error.currentBalanceCents = data.current_balance_cents;
       throw error;
     }
     return data;
   }
 
-  async executeWithCredits(userEmail, creditCost, description, operation) {
-    // Step 1: Check balance
-    const { balance } = await this.checkBalance(userEmail);
+  async executeWithCredits(userEmail, costCents, description, operation) {
+    // Step 1: Check balance (returns balance_cents)
+    const { balance_cents } = await this.checkBalance(userEmail);
     
-    if (balance < creditCost) {
-      const error = new Error(`Insufficient credits. Need ${creditCost}, have ${balance}`);
+    if (balance_cents < costCents) {
+      const error = new Error(`Insufficient credits. Need ${costCents} cents, have ${balance_cents} cents`);
       error.code = 'insufficient_balance';
-      error.currentBalance = balance;
-      error.requiredAmount = creditCost;
+      error.currentBalanceCents = balance_cents;
+      error.requiredAmountCents = costCents;
       throw error;
     }
 
@@ -486,7 +482,7 @@ class CreditsHubClient {
     const result = await operation();
 
     // Step 3: Debit credits after successful operation
-    await this.debit(userEmail, creditCost, description);
+    await this.debit(userEmail, costCents, description);
 
     return result;
   }
@@ -504,9 +500,10 @@ app.post('/api/generate-image', async (req, res) => {
   const { prompt, userEmail } = req.body;
   
   try {
+    // Cost is 500 cents ($5.00)
     const image = await creditsHub.executeWithCredits(
       userEmail,
-      5.00,
+      500,
       `Generated image: ${prompt.substring(0, 50)}`,
       async () => await generateImage(prompt)
     );
