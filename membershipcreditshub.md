@@ -306,95 +306,229 @@ if (!appRecord) {
 
 ---
 
-## 5. B2B API Endpoints
+## 5. B2B API Integration
 
-After obtaining an access token, use these APIs:
+After registering your app and generating an API key, use these APIs:
 
-### Get User Balance
+### Environment Variables
+
+```env
+CREDITS_HUB_URL=https://workdigitalcredithub.com
+CREDITS_HUB_API_KEY=app_xxxxxxxx_yyyyyyyyyyyyyyyyyyyyyyyy
+```
+
+### 5.1 Check User Balance
+
+**Endpoint:** `POST /api/v2/balance`
 
 **Request:**
-```http
-GET /api/b2b/balance
-Authorization: Bearer {access_token}
-X-App-ID: client_dc4156179c7aa8aeb377dd4b9acce7fc
-```
+```javascript
+async function checkUserBalance(userEmail) {
+  const response = await fetch(`${process.env.CREDITS_HUB_URL}/api/v2/balance`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.CREDITS_HUB_API_KEY}`
+    },
+    body: JSON.stringify({ user_email: userEmail })
+  });
 
-**Response:**
-```json
-{
-  "userId": "550e8400-e29b-41d4-a716-446655440000",
-  "balance": 15000,
-  "currency": "USD",
-  "formattedBalance": "$150.00"
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || data.error || 'Balance check failed');
+  }
+  return data;
 }
+
+// Usage
+const { balance, user_id, trace_id } = await checkUserBalance('user@example.com');
+console.log(`User has ${balance} credits available`);
 ```
 
-### Deduct Credits
-
-**Request:**
-```http
-POST /api/b2b/deduct
-Authorization: Bearer {access_token}
-X-App-ID: client_dc4156179c7aa8aeb377dd4b9acce7fc
-Content-Type: application/json
-
-{
-  "amount": 500,
-  "description": "Service usage - January 2024",
-  "referenceId": "invoice_12345"
-}
-```
-
-**Response (Success):**
+**Response (Success - HTTP 200):**
 ```json
 {
   "success": true,
-  "transactionId": "txn_uuid",
-  "previousBalance": 15000,
-  "newBalance": 14500,
-  "amountDeducted": 500,
-  "description": "Service usage - January 2024"
+  "balance": 150.00,
+  "user_id": "uuid-here",
+  "user_email": "user@example.com",
+  "trace_id": "abc123xyz"
 }
 ```
 
-**Response (Insufficient Balance):**
-```json
-{
-  "success": false,
-  "error": "insufficient_balance",
-  "message": "User does not have enough credits",
-  "currentBalance": 400,
-  "requestedAmount": 500
-}
-```
+### 5.2 Debit User Credits
 
-### Get Transaction History
+**Endpoint:** `POST /api/v2/debit`
 
 **Request:**
-```http
-GET /api/b2b/transactions?limit=20&offset=0
-Authorization: Bearer {access_token}
-X-App-ID: client_dc4156179c7aa8aeb377dd4b9acce7fc
+```javascript
+async function debitUserCredits(userEmail, amount, description) {
+  const response = await fetch(`${process.env.CREDITS_HUB_URL}/api/v2/debit`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.CREDITS_HUB_API_KEY}`
+    },
+    body: JSON.stringify({
+      user_email: userEmail,
+      amount: amount,
+      description: description
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.message || data.error || 'Debit failed');
+  }
+  return data;
+}
+
+// Usage
+const result = await debitUserCredits('user@example.com', 5.00, 'Generated 1 AI image');
+console.log(`New balance: ${result.new_balance}`);
 ```
 
-**Response:**
+**Response (Success - HTTP 200):**
 ```json
 {
-  "transactions": [
-    {
-      "id": "txn_uuid",
-      "type": "debit",
-      "amount": 500,
-      "description": "Service usage",
-      "referenceId": "invoice_12345",
-      "createdAt": "2024-12-28T12:00:00.000Z"
-    }
-  ],
-  "total": 1,
-  "limit": 20,
-  "offset": 0
+  "success": true,
+  "transaction_id": "txn_xxxxx",
+  "amount_debited": 5.00,
+  "new_balance": 145.00,
+  "user_email": "user@example.com",
+  "trace_id": "abc123xyz"
 }
 ```
+
+**Response (Insufficient Balance - HTTP 400):**
+```json
+{
+  "error": "insufficient_balance",
+  "message": "Insufficient balance",
+  "current_balance": 3.00,
+  "required_amount": 5.00,
+  "trace_id": "abc123xyz"
+}
+```
+
+### 5.3 Complete Integration Class
+
+```javascript
+// services/credits.js
+const CREDITS_HUB_URL = process.env.CREDITS_HUB_URL;
+const CREDITS_HUB_API_KEY = process.env.CREDITS_HUB_API_KEY;
+
+class CreditsHubClient {
+  constructor() {
+    if (!CREDITS_HUB_URL || !CREDITS_HUB_API_KEY) {
+      throw new Error('Credits Hub credentials not configured');
+    }
+  }
+
+  async checkBalance(userEmail) {
+    const response = await fetch(`${CREDITS_HUB_URL}/api/v2/balance`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CREDITS_HUB_API_KEY}`
+      },
+      body: JSON.stringify({ user_email: userEmail })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      const error = new Error(data.message || data.error || 'Balance check failed');
+      error.code = data.error;
+      error.traceId = data.trace_id;
+      throw error;
+    }
+    return data;
+  }
+
+  async debit(userEmail, amount, description) {
+    const response = await fetch(`${CREDITS_HUB_URL}/api/v2/debit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${CREDITS_HUB_API_KEY}`
+      },
+      body: JSON.stringify({
+        user_email: userEmail,
+        amount: amount,
+        description: description
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      const error = new Error(data.message || data.error || 'Debit failed');
+      error.code = data.error;
+      error.traceId = data.trace_id;
+      error.currentBalance = data.current_balance;
+      throw error;
+    }
+    return data;
+  }
+
+  async executeWithCredits(userEmail, creditCost, description, operation) {
+    // Step 1: Check balance
+    const { balance } = await this.checkBalance(userEmail);
+    
+    if (balance < creditCost) {
+      const error = new Error(`Insufficient credits. Need ${creditCost}, have ${balance}`);
+      error.code = 'insufficient_balance';
+      error.currentBalance = balance;
+      error.requiredAmount = creditCost;
+      throw error;
+    }
+
+    // Step 2: Execute the operation
+    const result = await operation();
+
+    // Step 3: Debit credits after successful operation
+    await this.debit(userEmail, creditCost, description);
+
+    return result;
+  }
+}
+
+export const creditsHub = new CreditsHubClient();
+```
+
+**Usage in your app:**
+
+```javascript
+import { creditsHub } from './services/credits.js';
+
+app.post('/api/generate-image', async (req, res) => {
+  const { prompt, userEmail } = req.body;
+  
+  try {
+    const image = await creditsHub.executeWithCredits(
+      userEmail,
+      5.00,
+      `Generated image: ${prompt.substring(0, 50)}`,
+      async () => await generateImage(prompt)
+    );
+    
+    res.json({ success: true, image });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+```
+
+### 5.4 B2B API Error Codes
+
+| HTTP Status | Error Code | Cause |
+|-------------|------------|-------|
+| 401 | `missing_api_key` | No Authorization header provided |
+| 401 | `invalid_api_key` | API key is incorrect or has been revoked |
+| 401 | `expired_api_key` | API key has passed its expiration date |
+| 400 | `missing_user_email` | Request body missing `user_email` field |
+| 400 | `user_not_found` | User email not registered in Credits Hub |
+| 400 | `not_subscribed` | User hasn't subscribed to your app |
+| 400 | `insufficient_balance` | User doesn't have enough credits |
 
 ---
 
