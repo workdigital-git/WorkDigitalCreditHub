@@ -82,35 +82,35 @@ function StatCard({
 }) {
   return (
     <Card>
-      <CardContent className="p-6">
+      <CardContent className="p-4 sm:p-6">
         <div className="flex items-center justify-between">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <Icon className="h-5 w-5 text-primary" />
+          <div className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg bg-primary/10">
+            <Icon className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />
           </div>
           {trend && trendValue && (
             <div
-              className={`flex items-center gap-1 text-sm ${
+              className={`flex items-center gap-1 text-xs sm:text-sm ${
                 trend === "up" ? "text-chart-2" : "text-destructive"
               }`}
             >
               {trend === "up" ? (
-                <TrendingUp className="h-4 w-4" />
+                <TrendingUp className="h-3 w-3 sm:h-4 sm:w-4" />
               ) : (
-                <TrendingDown className="h-4 w-4" />
+                <TrendingDown className="h-3 w-3 sm:h-4 sm:w-4" />
               )}
               {trendValue}
             </div>
           )}
         </div>
-        <div className="mt-4 space-y-1">
+        <div className="mt-3 sm:mt-4 space-y-0.5 sm:space-y-1">
           {isLoading ? (
-            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-6 sm:h-8 w-20 sm:w-24" />
           ) : (
-            <p className="text-2xl font-semibold tabular-nums" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, "-")}`}>
+            <p className="text-lg sm:text-2xl font-semibold tabular-nums truncate" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, "-")}`}>
               {value}
             </p>
           )}
-          <p className="text-sm text-muted-foreground">{title}</p>
+          <p className="text-xs sm:text-sm text-muted-foreground truncate">{title}</p>
         </div>
       </CardContent>
     </Card>
@@ -330,19 +330,20 @@ export default function DashboardPage() {
   return (
     <Layout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight" data-testid="text-page-title">
               Welcome to Work Digital
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-sm sm:text-base text-muted-foreground">
               Manage your credits and connected services
             </p>
           </div>
           <div className="flex gap-2">
             <Button
               variant="outline"
-              size="sm"
+              size="default"
+              className="flex-1 sm:flex-none"
               onClick={() => refetch()}
               disabled={isRefetching}
               data-testid="button-refresh"
@@ -350,8 +351,8 @@ export default function DashboardPage() {
               <RefreshCw className={`h-4 w-4 mr-2 ${isRefetching ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Link href="/wallet">
-              <Button size="sm" data-testid="button-add-funds">
+            <Link href="/wallet" className="flex-1 sm:flex-none">
+              <Button size="default" className="w-full" data-testid="button-add-funds">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Funds
               </Button>
@@ -359,7 +360,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="Current Balance"
             value={formatCurrency(data?.wallet?.balanceCents || 0)}

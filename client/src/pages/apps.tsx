@@ -524,18 +524,18 @@ export default function AppsPage() {
   return (
     <Layout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight" data-testid="text-page-title">
               Services
             </h1>
-            <p className="text-muted-foreground mt-1">
+            <p className="text-sm sm:text-base text-muted-foreground mt-1">
               Manage your connected services and authorizations
             </p>
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-2 sm:gap-4">
           <StatCard 
             icon={LayoutGrid} 
             label="Total Apps" 

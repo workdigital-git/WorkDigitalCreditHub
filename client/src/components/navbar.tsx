@@ -162,7 +162,7 @@ export function Navbar() {
       </div>
 
       {mobileMenuOpen && (
-        <nav className="md:hidden border-t bg-background p-4">
+        <nav className="md:hidden border-t bg-background p-3">
           <div className="flex flex-col gap-1">
             {navItems.map((item) => {
               const isActive = location === item.href || (item.href !== "/dashboard" && location.startsWith(item.href));
@@ -170,10 +170,10 @@ export function Navbar() {
                 <Link key={item.href} href={item.href} onClick={() => setMobileMenuOpen(false)}>
                   <Button
                     variant={isActive ? "secondary" : "ghost"}
-                    className="w-full justify-start gap-2"
+                    className="w-full justify-start gap-3 h-12 text-base"
                     data-testid={`mobile-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <item.icon className="h-5 w-5" />
                     {item.label}
                   </Button>
                 </Link>
@@ -183,10 +183,10 @@ export function Navbar() {
               <Link href="/admin" onClick={() => setMobileMenuOpen(false)}>
                 <Button
                   variant={location.startsWith("/admin") ? "secondary" : "ghost"}
-                  className="w-full justify-start gap-2"
+                  className="w-full justify-start gap-3 h-12 text-base"
                   data-testid="mobile-nav-admin"
                 >
-                  <Shield className="h-4 w-4" />
+                  <Shield className="h-5 w-5" />
                   Admin
                 </Button>
               </Link>

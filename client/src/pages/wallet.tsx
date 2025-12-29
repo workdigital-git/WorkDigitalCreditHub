@@ -96,33 +96,33 @@ function TransactionRow({
   const isCredit = transaction.type === "CREDIT";
 
   return (
-    <div className="flex items-center justify-between py-4 border-b last:border-0">
-      <div className="flex items-center gap-4">
+    <div className="flex items-start sm:items-center justify-between gap-3 py-3 sm:py-4 border-b last:border-0">
+      <div className="flex items-start sm:items-center gap-3 sm:gap-4 min-w-0 flex-1">
         <div
-          className={`flex h-10 w-10 items-center justify-center rounded-lg ${
+          className={`flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-lg shrink-0 ${
             isCredit ? "bg-chart-2/10" : "bg-destructive/10"
           }`}
         >
           {isCredit ? (
-            <ArrowDownRight className="h-5 w-5 text-chart-2" />
+            <ArrowDownRight className="h-4 w-4 sm:h-5 sm:w-5 text-chart-2" />
           ) : (
-            <ArrowUpRight className="h-5 w-5 text-destructive" />
+            <ArrowUpRight className="h-4 w-4 sm:h-5 sm:w-5 text-destructive" />
           )}
         </div>
-        <div>
-          <p className="font-medium" data-testid={`transaction-desc-${transaction.id}`}>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sm sm:text-base truncate" data-testid={`transaction-desc-${transaction.id}`}>
             {transaction.description}
           </p>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>{transaction.app?.name || transaction.source.replace(/_/g, " ")}</span>
-            <span>•</span>
-            <span>{formatDate(transaction.createdAt)}</span>
+          <div className="flex flex-wrap items-center gap-1 sm:gap-2 text-xs sm:text-sm text-muted-foreground">
+            <span className="truncate max-w-[100px] sm:max-w-none">{transaction.app?.name || transaction.source.replace(/_/g, " ")}</span>
+            <span className="hidden sm:inline">•</span>
+            <span className="text-xs">{formatDate(transaction.createdAt)}</span>
           </div>
         </div>
       </div>
-      <div className="text-right">
+      <div className="text-right shrink-0">
         <p
-          className={`font-semibold tabular-nums ${
+          className={`font-semibold tabular-nums text-sm sm:text-base ${
             isCredit ? "text-chart-2" : "text-foreground"
           }`}
           data-testid={`transaction-amount-${transaction.id}`}
@@ -858,19 +858,19 @@ export default function WalletPage() {
   return (
     <Layout>
       <div className="space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight" data-testid="text-page-title">
               Wallet & Credits
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-sm sm:text-base text-muted-foreground">
               Manage your credits and view transaction history
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
-              size="sm"
+              size="default"
               onClick={() => refetch()}
               disabled={isRefetching}
               data-testid="button-refresh"

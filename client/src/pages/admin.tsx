@@ -322,16 +322,17 @@ function UsersTab() {
               <p className="text-sm text-muted-foreground">{error?.message || "Unknown error"}</p>
             </div>
           ) : (
+            <div className="rounded-md border overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>User</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Balance</TableHead>
-                  <TableHead>2FA</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead className="min-w-[180px]">User</TableHead>
+                  <TableHead className="min-w-[100px]">Phone</TableHead>
+                  <TableHead className="min-w-[80px]">Balance</TableHead>
+                  <TableHead className="min-w-[80px]">2FA</TableHead>
+                  <TableHead className="min-w-[80px]">Role</TableHead>
+                  <TableHead className="min-w-[100px]">Joined</TableHead>
+                  <TableHead className="min-w-[100px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -408,6 +409,7 @@ function UsersTab() {
                 )}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -1051,7 +1053,7 @@ function MembersTab() {
             <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
             <p>No members found matching your criteria</p>
             {hasActiveFilters && (
-              <Button variant="link" onClick={clearFilters} className="mt-2">
+              <Button variant="ghost" onClick={clearFilters} className="mt-2 text-primary">
                 Clear filters
               </Button>
             )}
@@ -1453,14 +1455,15 @@ function AppsTab() {
               ))}
             </div>
           ) : (
+            <div className="rounded-md border overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>App</TableHead>
-                  <TableHead>Slug</TableHead>
-                  <TableHead>Pricing</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Actions</TableHead>
+                  <TableHead className="min-w-[200px]">App</TableHead>
+                  <TableHead className="min-w-[100px]">Slug</TableHead>
+                  <TableHead className="min-w-[100px]">Pricing</TableHead>
+                  <TableHead className="min-w-[80px]">Status</TableHead>
+                  <TableHead className="min-w-[180px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1523,6 +1526,7 @@ function AppsTab() {
                 )}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -5554,10 +5558,10 @@ export default function AdminPage() {
     <Layout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight" data-testid="text-page-title">
             Admin Panel
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-sm sm:text-base text-muted-foreground">
             Manage users, apps, and platform settings
           </p>
         </div>
@@ -5565,48 +5569,50 @@ export default function AdminPage() {
         <StatsCards stats={stats} isLoading={statsLoading} onNavigate={setActiveTab} />
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="flex-wrap">
-            <TabsTrigger value="members" className="gap-2" data-testid="tab-members">
-              <Search className="h-4 w-4" />
-              Members
-            </TabsTrigger>
-            <TabsTrigger value="users" className="gap-2" data-testid="tab-users">
-              <Users className="h-4 w-4" />
-              Users
-            </TabsTrigger>
-            <TabsTrigger value="apps" className="gap-2" data-testid="tab-apps">
-              <AppWindow className="h-4 w-4" />
-              Apps
-            </TabsTrigger>
-            <TabsTrigger value="api-keys" className="gap-2" data-testid="tab-api-keys">
-              <Key className="h-4 w-4" />
-              API Keys
-            </TabsTrigger>
-            <TabsTrigger value="integration" className="gap-2" data-testid="tab-integration">
-              <BookOpen className="h-4 w-4" />
-              Integration Guide
-            </TabsTrigger>
-            <TabsTrigger value="oauth-logs" className="gap-2" data-testid="tab-oauth-logs">
-              <Activity className="h-4 w-4" />
-              OAuth Logs
-            </TabsTrigger>
-            <TabsTrigger value="payment-gateways" className="gap-2" data-testid="tab-payment-gateways">
-              <CreditCard className="h-4 w-4" />
-              Payments
-            </TabsTrigger>
-            <TabsTrigger value="integration-health" className="gap-2" data-testid="tab-integration-health">
-              <HeartPulse className="h-4 w-4" />
-              Health
-            </TabsTrigger>
-            <TabsTrigger value="email" className="gap-2" data-testid="tab-email">
-              <Mail className="h-4 w-4" />
-              Email
-            </TabsTrigger>
-            <TabsTrigger value="referrals" className="gap-2" data-testid="tab-referrals">
-              <Gift className="h-4 w-4" />
-              Referrals
-            </TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0 pb-2">
+            <TabsList className="w-max md:w-auto inline-flex">
+              <TabsTrigger value="members" className="gap-1.5 min-w-fit" data-testid="tab-members">
+                <Search className="h-4 w-4" />
+                <span className="hidden sm:inline">Members</span>
+              </TabsTrigger>
+              <TabsTrigger value="users" className="gap-1.5 min-w-fit" data-testid="tab-users">
+                <Users className="h-4 w-4" />
+                <span className="hidden sm:inline">Users</span>
+              </TabsTrigger>
+              <TabsTrigger value="apps" className="gap-1.5 min-w-fit" data-testid="tab-apps">
+                <AppWindow className="h-4 w-4" />
+                <span className="hidden sm:inline">Apps</span>
+              </TabsTrigger>
+              <TabsTrigger value="api-keys" className="gap-1.5 min-w-fit" data-testid="tab-api-keys">
+                <Key className="h-4 w-4" />
+                <span className="hidden sm:inline">Keys</span>
+              </TabsTrigger>
+              <TabsTrigger value="integration" className="gap-1.5 min-w-fit" data-testid="tab-integration">
+                <BookOpen className="h-4 w-4" />
+                <span className="hidden sm:inline">Guide</span>
+              </TabsTrigger>
+              <TabsTrigger value="oauth-logs" className="gap-1.5 min-w-fit" data-testid="tab-oauth-logs">
+                <Activity className="h-4 w-4" />
+                <span className="hidden sm:inline">Logs</span>
+              </TabsTrigger>
+              <TabsTrigger value="payment-gateways" className="gap-1.5 min-w-fit" data-testid="tab-payment-gateways">
+                <CreditCard className="h-4 w-4" />
+                <span className="hidden sm:inline">Pay</span>
+              </TabsTrigger>
+              <TabsTrigger value="integration-health" className="gap-1.5 min-w-fit" data-testid="tab-integration-health">
+                <HeartPulse className="h-4 w-4" />
+                <span className="hidden sm:inline">Health</span>
+              </TabsTrigger>
+              <TabsTrigger value="email" className="gap-1.5 min-w-fit" data-testid="tab-email">
+                <Mail className="h-4 w-4" />
+                <span className="hidden sm:inline">Email</span>
+              </TabsTrigger>
+              <TabsTrigger value="referrals" className="gap-1.5 min-w-fit" data-testid="tab-referrals">
+                <Gift className="h-4 w-4" />
+                <span className="hidden sm:inline">Refs</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="members">
             <MembersTab />

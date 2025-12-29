@@ -863,33 +863,35 @@ export default function SettingsPage() {
     <Layout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight" data-testid="text-page-title">
+          <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight" data-testid="text-page-title">
             Settings
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-sm sm:text-base text-muted-foreground">
             Manage your account settings and preferences
           </p>
         </div>
 
         <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="profile" className="gap-2" data-testid="tab-profile">
-              <User className="h-4 w-4" />
-              <span className="hidden sm:inline">Profile</span>
-            </TabsTrigger>
-            <TabsTrigger value="security" className="gap-2" data-testid="tab-security">
-              <Shield className="h-4 w-4" />
-              <span className="hidden sm:inline">Security</span>
-            </TabsTrigger>
-            <TabsTrigger value="api-keys" className="gap-2" data-testid="tab-api-keys">
-              <Key className="h-4 w-4" />
-              <span className="hidden sm:inline">API Keys</span>
-            </TabsTrigger>
-            <TabsTrigger value="billing-dev" className="gap-2" data-testid="tab-billing-dev">
-              <CreditCard className="h-4 w-4" />
-              <span className="hidden sm:inline">Billing (Dev)</span>
-            </TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="w-full sm:w-auto justify-start">
+              <TabsTrigger value="profile" className="gap-2 min-w-fit" data-testid="tab-profile">
+                <User className="h-4 w-4" />
+                <span className="hidden sm:inline">Profile</span>
+              </TabsTrigger>
+              <TabsTrigger value="security" className="gap-2 min-w-fit" data-testid="tab-security">
+                <Shield className="h-4 w-4" />
+                <span className="hidden sm:inline">Security</span>
+              </TabsTrigger>
+              <TabsTrigger value="api-keys" className="gap-2 min-w-fit" data-testid="tab-api-keys">
+                <Key className="h-4 w-4" />
+                <span className="hidden sm:inline">API Keys</span>
+              </TabsTrigger>
+              <TabsTrigger value="billing-dev" className="gap-2 min-w-fit" data-testid="tab-billing-dev">
+                <CreditCard className="h-4 w-4" />
+                <span className="hidden sm:inline">Billing</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           <TabsContent value="profile">
             <ProfileTab />
