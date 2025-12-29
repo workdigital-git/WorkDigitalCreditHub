@@ -3429,7 +3429,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         scope, 
         state, 
         code_challenge, 
-        code_challenge_method 
+        code_challenge_method,
+        response_mode 
       } = req.query as {
         client_id?: string;
         redirect_uri?: string;
@@ -3438,6 +3439,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         state?: string;
         code_challenge?: string;
         code_challenge_method?: string;
+        response_mode?: string;
       };
 
       ctx.clientId = client_id;
@@ -3570,17 +3572,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         redirectUrl.searchParams.append("state", state);
       }
 
-      const response: { redirect_uri: string; code: string; state?: string; trace_id: string } = { 
-        redirect_uri: redirectUrl.toString(),
-        code: authCode,
-        trace_id: traceId,
-      };
-      if (state) {
-        response.state = state;
-      }
-
       await logOAuthEvent(ctx, "AUTHORIZE_SUCCESS", "SUCCESS");
-      res.json(response);
+
+      // Support both redirect mode (default for external apps) and JSON mode (for SPA)
+      if (response_mode === "json") {
+        // SPA mode: return JSON for frontend to handle redirect
+        const response: { redirect_uri: string; code: string; state?: string; trace_id: string } = { 
+          redirect_uri: redirectUrl.toString(),
+          code: authCode,
+          trace_id: traceId,
+        };
+        if (state) {
+          response.state = state;
+        }
+        res.json(response);
+      } else {
+        // Standard OAuth mode: HTTP redirect (default)
+        res.redirect(redirectUrl.toString());
+      }
     } catch (error) {
       await logOAuthEvent(ctx, "AUTHORIZE_ERROR", "FAILURE", "server_error", String(error));
       console.error("OAuth authorize error:", error);

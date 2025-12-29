@@ -512,6 +512,7 @@ export default function OAuthAuthorizePage() {
         response_type: oauthParams!.response_type,
         code_challenge: oauthParams!.code_challenge,
         code_challenge_method: oauthParams!.code_challenge_method,
+        response_mode: "json", // SPA mode: return JSON so frontend handles redirect
         ...(oauthParams!.scope && { scope: oauthParams!.scope }),
         ...(oauthParams!.state && { state: oauthParams!.state }),
       });

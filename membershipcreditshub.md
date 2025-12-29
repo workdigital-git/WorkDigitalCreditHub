@@ -84,6 +84,11 @@ GET https://creditshub.workdigital.com/api/oauth/authorize
 | `code_challenge` | string | PKCE challenge (SHA256 hash, base64url encoded) |
 | `code_challenge_method` | string | Must be `S256` |
 
+**Optional Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `response_mode` | string | `json` for JSON response (SPA mode), omit for HTTP redirect (default) |
+
 **Credits Hub Validates:**
 1. `client_id` exists in `apps` table
 2. `redirect_uri` matches `callbackUrl` or is in `allowedCallbackUrls`
