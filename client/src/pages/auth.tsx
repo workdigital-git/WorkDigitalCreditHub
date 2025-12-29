@@ -42,20 +42,7 @@ export default function AuthPage() {
   const [activeTab, setActiveTab] = useState("login");
   
   const searchString = useSearch();
-  const searchParams = new URLSearchParams(searchString);
-  const refCodeFromUrl = searchParams.get("ref") || "";
-  const returnUrl = searchParams.get("returnUrl") || "";
-  
-  // Determine where to redirect after successful login
-  const getRedirectUrl = () => {
-    if (returnUrl) {
-      // Security: only allow relative URLs or same-origin URLs
-      if (returnUrl.startsWith("/")) {
-        return returnUrl;
-      }
-    }
-    return "/dashboard";
-  };
+  const refCodeFromUrl = new URLSearchParams(searchString).get("ref") || "";
   
   useEffect(() => {
     if (refCodeFromUrl) {
@@ -80,13 +67,7 @@ export default function AuthPage() {
         setPendingCredentials({ email: loginForm.email, password: loginForm.password });
       } else {
         toast({ title: "Welcome back!", description: "You've successfully logged in." });
-        const redirectTo = getRedirectUrl();
-        if (redirectTo.startsWith("/api/")) {
-          // For API routes (like OAuth), use window.location to ensure proper redirect
-          window.location.href = redirectTo;
-        } else {
-          setLocation(redirectTo);
-        }
+        setLocation("/dashboard");
       }
     } catch (error) {
       toast({
@@ -106,12 +87,7 @@ export default function AuthPage() {
     try {
       await login(pendingCredentials.email, pendingCredentials.password, totpCode);
       toast({ title: "Welcome back!", description: "You've successfully logged in." });
-      const redirectTo = getRedirectUrl();
-      if (redirectTo.startsWith("/api/")) {
-        window.location.href = redirectTo;
-      } else {
-        setLocation(redirectTo);
-      }
+      setLocation("/dashboard");
     } catch (error) {
       toast({
         title: "Verification failed",
@@ -141,12 +117,7 @@ export default function AuthPage() {
           ? "Welcome to Work Digital! Check your wallet for a referral bonus." 
           : "Welcome to Work Digital." 
       });
-      const redirectTo = getRedirectUrl();
-      if (redirectTo.startsWith("/api/")) {
-        window.location.href = redirectTo;
-      } else {
-        setLocation(redirectTo);
-      }
+      setLocation("/dashboard");
     } catch (error) {
       toast({
         title: "Registration failed",
