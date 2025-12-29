@@ -3386,7 +3386,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.get("/api/oauth/authorize", authMiddleware, async (req: AuthRequest, res) => {
+  app.get("/api/oauth/authorize", async (req: AuthRequest, res) => {
     const traceId = generateTraceId();
     const spanId = randomBytes(8).toString("hex");
     const ctx: OAuthAuditContext = {
@@ -3400,7 +3400,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       requestPath: "/api/oauth/authorize",
     };
 
-    const rateLimitKey = req.user?.id || req.ip || "anonymous";
+    // Check authentication - if not logged in, redirect to login with return URL
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : req.cookies?.accessToken;
+    
+    let user: User | null = null;
+    if (token) {
+      try {
+        const decoded = verifyToken(token) as { userId: string };
+        if (decoded?.userId) {
+          user = await storage.getUser(decoded.userId) || null;
+        }
+      } catch (e) {
+        // Token invalid, user remains null
+      }
+    }
+
+    if (!user) {
+      // Build return URL with all OAuth params preserved
+      const returnUrl = `/api/oauth/authorize?${new URLSearchParams(req.query as Record<string, string>).toString()}`;
+      const loginUrl = `/auth?returnUrl=${encodeURIComponent(returnUrl)}`;
+      console.log('[OAuth] User not authenticated, redirecting to login:', loginUrl);
+      return res.redirect(loginUrl);
+    }
+
+    req.user = user;
+
+    const rateLimitKey = user.id || req.ip || "anonymous";
     const rateLimitResult = oauthRateLimiter.check(rateLimitKey);
     const rateLimitHeaders = oauthRateLimiter.getHeaders(rateLimitResult);
     
@@ -3409,8 +3435,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
 
     if (!rateLimitResult.allowed) {
-      ctx.userId = req.user?.id;
-      ctx.userEmail = req.user?.email;
+      ctx.userId = user.id;
+      ctx.userEmail = user.email;
       res.setHeader("Retry-After", String(rateLimitResult.retryAfter || 60));
       await logOAuthEvent(ctx, "RATE_LIMITED", "FAILURE", "rate_limit_exceeded", "Too many authorization requests");
       return res.status(429).json({
@@ -3440,11 +3466,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         code_challenge_method?: string;
       };
 
-      ctx.clientId = client_id;
+      // Trim whitespace from client_id to handle URL encoding issues
+      const cleanClientId = client_id?.trim();
+
+      ctx.clientId = cleanClientId;
       ctx.redirectUri = redirect_uri;
       ctx.scope = scope;
-      ctx.userId = req.user?.id;
-      ctx.userEmail = req.user?.email;
+      ctx.userId = user.id;
+      ctx.userEmail = user.email;
 
       await logOAuthEvent(ctx, "AUTHORIZE_REQUEST", "INFO", undefined, undefined, {
         response_type,
@@ -3454,7 +3483,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         rate_limit_remaining: rateLimitResult.remaining,
       });
 
-      if (!client_id || !redirect_uri) {
+      if (!cleanClientId || !redirect_uri) {
         await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_request", "client_id and redirect_uri are required");
         return res.status(400).json({ error: "invalid_request", error_description: "client_id and redirect_uri are required", trace_id: traceId });
       }
@@ -3464,7 +3493,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "unsupported_response_type", error_description: "Only response_type=code is supported", trace_id: traceId });
       }
 
-      const appRecord = await storage.getAppByClientId(client_id);
+      const appRecord = await storage.getAppByClientId(cleanClientId);
       if (!appRecord) {
         await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_client", "Unknown client_id");
         return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
