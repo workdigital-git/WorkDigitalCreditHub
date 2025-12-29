@@ -51,6 +51,11 @@ The application starts an Express backend and Vite frontend on port 5000.
 - Inter font family
 - Blue primary color scheme
 - Subtle shadows and borders
+- **Mobile-first responsive design**:
+  - 48px touch targets for mobile navigation
+  - Responsive text: `text-2xl sm:text-3xl` for headers
+  - 2-column stat grids on mobile, 4-column on desktop
+  - Horizontally scrollable tabs on narrow screens
 
 ## Documentation Links
 
