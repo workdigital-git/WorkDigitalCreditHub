@@ -59,11 +59,13 @@ clientSecret: randomBytes(32).toString("hex")
 
 ### Step 1: Authorization Request
 
-**Endpoint:** `GET /api/oauth/authorize`
+> **IMPORTANT:** Redirect users to the **authorization page** (`/oauth/authorize`), NOT the API endpoint (`/api/oauth/authorize`). The page handles user login and consent before redirecting back to your app.
 
-**Your App Sends:**
+**Authorization Page URL:** `GET /oauth/authorize`
+
+**Your App Redirects User To:**
 ```
-GET https://creditshub.workdigital.com/api/oauth/authorize
+https://workdigitalcredithub.com/oauth/authorize
   ?client_id=client_dc4156179c7aa8aeb377dd4b9acce7fc
   &redirect_uri=https://yourapp.com/callback
   &response_type=code
@@ -71,6 +73,16 @@ GET https://creditshub.workdigital.com/api/oauth/authorize
   &state=random_state_string
   &code_challenge=BASE64URL_SHA256_HASH
   &code_challenge_method=S256
+```
+
+**CORRECT:**
+```
+https://workdigitalcredithub.com/oauth/authorize?client_id=...
+```
+
+**WRONG (will fail with "Authentication required"):**
+```
+https://workdigitalcredithub.com/api/oauth/authorize?client_id=...
 ```
 
 **Required Parameters:**
@@ -533,6 +545,23 @@ CREDITS_HUB_CALLBACK_URL=https://yourapp.com/callback
 ---
 
 ## 10. Troubleshooting
+
+### "Authentication required" Error
+
+**Cause:** You're calling the API endpoint directly instead of the authorization page.
+
+**Solution:** Change your OAuth URL from:
+```
+❌ https://workdigitalcredithub.com/api/oauth/authorize?...
+```
+To:
+```
+✅ https://workdigitalcredithub.com/oauth/authorize?...
+```
+
+The `/oauth/authorize` page shows the login/consent UI. The `/api/oauth/authorize` endpoint is for internal use only.
+
+---
 
 ### "Unknown client_id" Error
 
