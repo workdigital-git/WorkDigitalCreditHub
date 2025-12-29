@@ -672,9 +672,10 @@ function CreditPacksSection() {
 
   const purchaseMutation = useMutation({
     mutationFn: async (packSku: string) => {
-      return apiRequest("POST", "/api/billing/checkout-session", { packSku });
+      const response = await apiRequest("POST", "/api/billing/checkout-session", { packSku });
+      return response.json();
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: { url?: string; sessionId?: string }) => {
       if (data.url) {
         window.location.href = data.url;
       } else {
