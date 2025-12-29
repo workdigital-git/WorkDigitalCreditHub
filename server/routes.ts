@@ -2979,6 +2979,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const credentials = generateClientCredentials();
       const appData = validation.data;
+      
+      console.log('[App Creation] Generating credentials:', { 
+        clientId: credentials.clientId,
+        slug: appData.slug,
+        name: appData.name 
+      });
+      
       const app = await storage.createApp({
         name: appData.name,
         slug: appData.slug,
@@ -2994,6 +3001,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         clientSecret: credentials.clientSecret,
         iconUrl: null,
         isActive: true,
+      });
+
+      console.log('[App Creation] App created successfully:', { 
+        id: app.id,
+        clientId: app.clientId,
+        name: app.name 
+      });
+      
+      // Verify the app can be retrieved immediately
+      const verifyApp = await storage.getAppByClientId(credentials.clientId);
+      console.log('[App Creation] Verification lookup:', { 
+        found: !!verifyApp,
+        storedClientId: verifyApp?.clientId 
       });
 
       res.status(201).json(app);
@@ -3466,7 +3486,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "unsupported_response_type", error_description: "Only response_type=code is supported", trace_id: traceId });
       }
 
+      console.log('[OAuth Authorize] Looking up client_id:', client_id);
       const appRecord = await storage.getAppByClientId(client_id);
+      console.log('[OAuth Authorize] Lookup result:', { found: !!appRecord, appName: appRecord?.name });
       if (!appRecord) {
         await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_client", "Unknown client_id");
         return res.status(400).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
@@ -3655,7 +3677,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ error: "invalid_request", error_description: "code, redirect_uri, and client_id are required", trace_id: traceId });
       }
 
+      console.log('[OAuth Token] Looking up client_id:', client_id);
       const appRecord = await storage.getAppByClientId(client_id);
+      console.log('[OAuth Token] Lookup result:', { found: !!appRecord, appName: appRecord?.name });
       if (!appRecord) {
         await logOAuthEvent(ctx, "TOKEN_FAILED", "FAILURE", "invalid_client", "Unknown client_id");
         return res.status(401).json({ error: "invalid_client", error_description: "Unknown client_id", trace_id: traceId });
