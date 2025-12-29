@@ -25,9 +25,10 @@ import {
   PowerOff,
   Loader2,
   ExternalLink,
+  GripVertical,
 } from "lucide-react";
 import type { Wallet as WalletType, WalletTransaction, AppSubscription, App } from "@shared/schema";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 interface DashboardData {
   wallet: WalletType | null;
@@ -165,18 +166,44 @@ function AppCard({
   onConnect,
   onDisconnect,
   isLoading,
+  isDragging,
+  onDragStart,
+  onDragOver,
+  onDragEnd,
+  onDrop,
 }: {
   app: App;
   subscription?: AppSubscription;
   onConnect: () => void;
   onDisconnect: () => void;
   isLoading: boolean;
+  isDragging?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
 }) {
   const isConnected = subscription?.status === "ACTIVE" || subscription?.status === "PAUSED";
 
   return (
-    <div className={`p-4 rounded-lg border ${isConnected ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'}`}>
-      <div className="flex items-start gap-3">
+    <div 
+      className={`p-4 rounded-lg border transition-all duration-200 ${
+        isConnected ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-destructive/40 bg-destructive/5'
+      } ${isDragging ? 'opacity-50 scale-95 ring-2 ring-primary' : ''}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDrop={onDrop}
+      data-testid={`dashboard-app-card-${app.id}`}
+    >
+      <div className="flex items-start gap-2">
+        <div 
+          className="flex items-center justify-center h-10 w-6 cursor-grab active:cursor-grabbing shrink-0 text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+          data-testid={`dashboard-drag-handle-${app.id}`}
+        >
+          <GripVertical className="h-4 w-4" />
+        </div>
         <div className={`flex h-10 w-10 items-center justify-center rounded-lg shrink-0 ${
           isConnected ? 'bg-emerald-500/20' : 'bg-destructive/20'
         }`}>
@@ -210,7 +237,7 @@ function AppCard({
         </div>
       </div>
       
-      <div className="flex items-center gap-2 mt-3">
+      <div className="flex items-center gap-2 mt-3 ml-8">
         {isConnected ? (
           <Button
             variant="outline"
@@ -245,14 +272,14 @@ function AppCard({
         )}
         {app.callbackUrl && (
           <Button
-            variant="outline"
+            variant="default"
             size="icon"
             className="h-8 w-8"
             asChild
             data-testid={`dashboard-visit-${app.id}`}
           >
-            <a href={app.callbackUrl} target="_blank" rel="noopener noreferrer">
-              <ExternalLink className="h-3 w-3" />
+            <a href={app.callbackUrl} target="_blank" rel="noopener noreferrer" title="Open in new window">
+              <ExternalLink className="h-4 w-4" />
             </a>
           </Button>
         )}
@@ -261,12 +288,107 @@ function AppCard({
   );
 }
 
+const APP_ORDER_KEY = "dashboard-app-order";
+
+function getStoredAppOrder(): string[] {
+  try {
+    const stored = localStorage.getItem(APP_ORDER_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function storeAppOrder(order: string[]) {
+  try {
+    localStorage.setItem(APP_ORDER_KEY, JSON.stringify(order));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export default function DashboardPage() {
   const { data, isLoading, refetch, isRefetching } = useQuery<DashboardData>({
     queryKey: ["/api/dashboard"],
   });
   const { toast } = useToast();
   const [loadingAppId, setLoadingAppId] = useState<string | null>(null);
+  const [appOrder, setAppOrder] = useState<string[]>([]);
+  const [draggedAppId, setDraggedAppId] = useState<string | null>(null);
+
+  // Initialize app order from localStorage or default to sorted order
+  useEffect(() => {
+    if (data?.allApps) {
+      const storedOrder = getStoredAppOrder();
+      const appIds = data.allApps.map(a => a.id);
+      
+      // Filter stored order to only include existing apps, then add any new apps
+      const validStoredOrder = storedOrder.filter(id => appIds.includes(id));
+      const newApps = appIds.filter(id => !validStoredOrder.includes(id));
+      
+      if (validStoredOrder.length > 0) {
+        setAppOrder([...validStoredOrder, ...newApps]);
+      } else {
+        // Default order: connected apps first, then disconnected
+        const connectedIds = data.allApps
+          .filter(app => {
+            const sub = data.subscriptions?.find(s => s.appId === app.id);
+            return sub?.status === "ACTIVE" || sub?.status === "PAUSED";
+          })
+          .map(a => a.id);
+        const disconnectedIds = appIds.filter(id => !connectedIds.includes(id));
+        setAppOrder([...connectedIds, ...disconnectedIds]);
+      }
+    }
+  }, [data?.allApps, data?.subscriptions]);
+
+  const handleDragStart = useCallback((e: React.DragEvent, appId: string) => {
+    setDraggedAppId(appId);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", appId);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedAppId(null);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, targetAppId: string) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData("text/plain");
+    
+    if (draggedId && draggedId !== targetAppId) {
+      setAppOrder(prevOrder => {
+        // If prevOrder is empty, use current app IDs as base
+        const allAppIds = data?.allApps?.map(app => app.id) ?? [];
+        const currentOrder = prevOrder.length > 0 ? prevOrder : allAppIds;
+        
+        if (currentOrder.length === 0) return prevOrder;
+        
+        const newOrder = [...currentOrder];
+        const draggedIndex = newOrder.indexOf(draggedId);
+        const targetIndex = newOrder.indexOf(targetAppId);
+        
+        if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
+          newOrder.splice(draggedIndex, 1);
+          newOrder.splice(targetIndex, 0, draggedId);
+          storeAppOrder(newOrder);
+          toast({
+            title: "Apps reordered",
+            description: "Your app order has been saved",
+          });
+          return newOrder;
+        }
+        
+        return prevOrder;
+      });
+    }
+    setDraggedAppId(null);
+  }, [toast, data?.allApps]);
 
   const subscribeMutation = useMutation({
     mutationFn: async (appId: string) => {
@@ -325,7 +447,12 @@ export default function DashboardPage() {
     return !sub || sub.status === "CANCELLED" || sub.status === "EXPIRED" || sub.status === "PENDING";
   });
 
-  const sortedApps = [...connectedApps, ...disconnectedApps];
+  // Use custom order from state (persisted in localStorage)
+  const sortedApps = appOrder.length > 0
+    ? appOrder
+        .map(id => allApps.find(app => app.id === id))
+        .filter((app): app is App => app !== undefined)
+    : [...connectedApps, ...disconnectedApps];
 
   return (
     <Layout>
@@ -396,6 +523,7 @@ export default function DashboardPage() {
                 <CardTitle className="text-lg">Services</CardTitle>
                 <CardDescription>
                   {connectedApps.length} connected, {disconnectedApps.length} available
+                  <span className="hidden sm:inline"> • Drag to reorder</span>
                 </CardDescription>
               </div>
               <Link href="/apps">
@@ -438,6 +566,11 @@ export default function DashboardPage() {
                           unsubscribeMutation.mutate(app.id);
                         }}
                         isLoading={loadingAppId === app.id}
+                        isDragging={draggedAppId === app.id}
+                        onDragStart={(e) => handleDragStart(e, app.id)}
+                        onDragOver={handleDragOver}
+                        onDragEnd={handleDragEnd}
+                        onDrop={(e) => handleDrop(e, app.id)}
                       />
                     );
                   })}
