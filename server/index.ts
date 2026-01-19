@@ -8,6 +8,15 @@ import { storage } from "./storage";
 
 const app = express();
 
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: "WorkDigitalCreditHub",
+    time: new Date().toISOString(),
+  });
+});
+
 const ALLOWED_ORIGINS = [
   'https://WorkDigitalCredits.replit.app',
   'https://workdigitalcredits.replit.app',
