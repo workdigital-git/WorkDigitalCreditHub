@@ -277,6 +277,7 @@ export const apps = pgTable("apps", {
   description: text("description").notNull(),
   callbackUrl: text("callback_url").notNull(),
   allowedCallbackUrls: text("allowed_callback_urls").array().default([]),
+  allowedIps: text("allowed_ips").array().default([]),
   pricingModel: text("pricing_model").notNull(),
   billingCycle: billingCycleEnum("billing_cycle").default("MONTHLY"),
   monthlyPriceCents: bigint("monthly_price_cents", { mode: "number" }).default(0),

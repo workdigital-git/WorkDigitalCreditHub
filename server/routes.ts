@@ -79,6 +79,14 @@ class OAuthRateLimiter {
   }
 }
 
+function ipToInt(ip: string): number {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
+    return 0;
+  }
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
 const oauthRateLimiter = new OAuthRateLimiter(60 * 1000, 60);
 const oauthTokenRateLimiter = new OAuthRateLimiter(60 * 1000, 30);
 const authRateLimiter = new OAuthRateLimiter(15 * 60 * 1000, 10);
@@ -3026,7 +3034,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/admin/apps/:id", authMiddleware, adminMiddleware, async (req: AuthRequest, res) => {
     try {
       const { id } = req.params;
-      const { name, callbackUrl, allowedCallbackUrls, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
+      const { name, callbackUrl, allowedCallbackUrls, allowedIps, description, pricingModel, monthlyPriceCents, yearlyPriceCents, perUsePriceCents, isActive } = req.body;
 
       const existingApp = await storage.getApp(id);
       if (!existingApp) {
@@ -3060,6 +3068,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           }
         }
         updateData.allowedCallbackUrls = allowedCallbackUrls;
+      }
+
+      if (allowedIps !== undefined) {
+        if (!Array.isArray(allowedIps)) {
+          return res.status(400).json({ message: "allowedIps must be an array" });
+        }
+        const ipPattern = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+        for (const ip of allowedIps) {
+          if (typeof ip !== "string" || !ipPattern.test(ip)) {
+            return res.status(400).json({ message: "Each IP must be a valid IPv4 address or CIDR block (e.g., 192.168.1.1 or 10.0.0.0/8)" });
+          }
+        }
+        updateData.allowedIps = allowedIps;
       }
       
       if (description !== undefined) {
@@ -3532,6 +3553,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
 
       await logOAuthEvent(ctx, "REDIRECT_URI_VALIDATED", "INFO");
+
+      const allowedIps = appRecord.allowedIps || [];
+      if (allowedIps.length > 0) {
+        const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
+                         req.socket.remoteAddress || 
+                         'unknown';
+        
+        const isIpAllowed = allowedIps.some(allowed => {
+          if (allowed.includes('/')) {
+            const [subnet, bits] = allowed.split('/');
+            const subnetInt = ipToInt(subnet);
+            const clientInt = ipToInt(clientIp);
+            const mask = ~(Math.pow(2, 32 - parseInt(bits)) - 1) >>> 0;
+            return (subnetInt & mask) === (clientInt & mask);
+          }
+          return allowed === clientIp;
+        });
+
+        if (!isIpAllowed) {
+          await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "ip_not_allowed", "Client IP not in whitelist", {
+            clientIp,
+            allowedIps,
+          });
+          return res.status(403).json({ error: "ip_not_allowed", error_description: "Client IP is not authorized for this app", trace_id: traceId });
+        }
+        await logOAuthEvent(ctx, "IP_VALIDATED", "INFO", undefined, undefined, { clientIp });
+      }
 
       if (!code_challenge) {
         await logOAuthEvent(ctx, "AUTHORIZE_FAILED", "FAILURE", "invalid_request", "PKCE code_challenge is required");

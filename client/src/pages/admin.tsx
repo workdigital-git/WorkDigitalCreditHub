@@ -1120,6 +1120,7 @@ function AppsTab() {
     description: "",
     callbackUrl: "",
     additionalCallbackUrls: [""],
+    allowedIps: [""],
     pricingModel: "per_call",
   });
 
@@ -1127,6 +1128,7 @@ function AppsTab() {
     name: "",
     callbackUrl: "",
     additionalCallbackUrls: [""] as string[],
+    allowedIps: [""] as string[],
     description: "",
     pricingModel: "",
   });
@@ -1144,12 +1146,15 @@ function AppsTab() {
         ...formData.additionalCallbackUrls.filter(url => url.trim())
       ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
       
+      const allowedIps = formData.allowedIps.filter(ip => ip.trim());
+      
       return apiRequest("POST", "/api/admin/apps", {
         name: formData.name,
         slug: formData.slug,
         description: formData.description,
         callbackUrl: formData.callbackUrl,
         allowedCallbackUrls: allCallbackUrls,
+        allowedIps,
         pricingModel: formData.pricingModel,
       });
     },
@@ -1164,6 +1169,7 @@ function AppsTab() {
         description: "",
         callbackUrl: "",
         additionalCallbackUrls: [""],
+        allowedIps: [""],
         pricingModel: "per_call",
       });
     },
@@ -1184,10 +1190,13 @@ function AppsTab() {
         ...editFormData.additionalCallbackUrls.filter(url => url.trim())
       ].filter((url, idx, arr) => url && arr.indexOf(url) === idx);
       
+      const allowedIps = editFormData.allowedIps.filter(ip => ip.trim());
+      
       return apiRequest("PATCH", `/api/admin/apps/${editApp.id}`, {
         name: editFormData.name,
         callbackUrl: editFormData.callbackUrl,
         allowedCallbackUrls: allCallbackUrls,
+        allowedIps,
         description: editFormData.description,
         pricingModel: editFormData.pricingModel,
       });
@@ -1251,10 +1260,12 @@ function AppsTab() {
 
   const openEditDialog = (app: App) => {
     const additionalUrls = (app.allowedCallbackUrls || []).filter(url => url !== app.callbackUrl);
+    const ips = (app as any).allowedIps || [];
     setEditFormData({
       name: app.name,
       callbackUrl: app.callbackUrl,
       additionalCallbackUrls: additionalUrls.length > 0 ? additionalUrls : [""],
+      allowedIps: ips.length > 0 ? ips : [""],
       description: app.description || "",
       pricingModel: app.pricingModel,
     });
@@ -1408,6 +1419,57 @@ function AppsTab() {
                       </div>
                     ))}
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>IP Whitelist (Optional)</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setFormData({
+                        ...formData,
+                        allowedIps: [...formData.allowedIps, ""]
+                      })}
+                      data-testid="button-add-ip"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add IP
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Restrict OAuth requests to specific IPs or CIDR blocks. Leave empty to allow all.
+                  </p>
+                  {formData.allowedIps.map((ip, index) => (
+                    <div key={index} className="flex gap-2">
+                      <Input
+                        value={ip}
+                        onChange={(e) => {
+                          const newIps = [...formData.allowedIps];
+                          newIps[index] = e.target.value;
+                          setFormData({ ...formData, allowedIps: newIps });
+                        }}
+                        placeholder="192.168.1.1 or 10.0.0.0/8"
+                        data-testid={`input-allowed-ip-${index}`}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          const newIps = formData.allowedIps.filter((_, i) => i !== index);
+                          setFormData({
+                            ...formData,
+                            allowedIps: newIps.length > 0 ? newIps : [""]
+                          });
+                        }}
+                        data-testid={`button-remove-ip-${index}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="space-y-2">
@@ -1919,6 +1981,57 @@ fetch('https://workdigitalcredithub.com/api/b2b/balance', {
                   </div>
                 ))}
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>IP Whitelist (Optional)</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditFormData({
+                    ...editFormData,
+                    allowedIps: [...editFormData.allowedIps, ""]
+                  })}
+                  data-testid="button-edit-add-ip"
+                >
+                  <Plus className="h-3 w-3 mr-1" />
+                  Add IP
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Restrict OAuth requests to specific IPs or CIDR blocks. Leave empty to allow all.
+              </p>
+              {editFormData.allowedIps.map((ip, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input
+                    value={ip}
+                    onChange={(e) => {
+                      const newIps = [...editFormData.allowedIps];
+                      newIps[index] = e.target.value;
+                      setEditFormData({ ...editFormData, allowedIps: newIps });
+                    }}
+                    placeholder="192.168.1.1 or 10.0.0.0/8"
+                    data-testid={`input-edit-allowed-ip-${index}`}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      const newIps = editFormData.allowedIps.filter((_, i) => i !== index);
+                      setEditFormData({
+                        ...editFormData,
+                        allowedIps: newIps.length > 0 ? newIps : [""]
+                      });
+                    }}
+                    data-testid={`button-edit-remove-ip-${index}`}
+                  >
+                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
             </div>
 
             <div className="space-y-2">
