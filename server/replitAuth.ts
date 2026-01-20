@@ -170,6 +170,10 @@ export async function setupReplitAuth(app: Express) {
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   app.get("/api/auth/replit/login", (req, res, next) => {
+    const callbackUrl = `https://${req.hostname}/api/auth/replit/callback`;
+    console.log(`[OAuth] Login initiated from: ${req.hostname}`);
+    console.log(`[OAuth] Expected callback URL: ${callbackUrl}`);
+    console.log(`[OAuth] Full request URL: ${req.protocol}://${req.get('host')}${req.originalUrl}`);
     ensureStrategy(req.hostname);
     passport.authenticate(`replitauth:${req.hostname}`, {
       prompt: "login consent",
@@ -178,21 +182,34 @@ export async function setupReplitAuth(app: Express) {
   });
 
   app.get("/api/auth/replit/callback", (req, res, next) => {
+    console.log(`[OAuth] Callback received at: ${req.hostname}`);
+    console.log(`[OAuth] Query params:`, JSON.stringify(req.query));
+    console.log(`[OAuth] Full callback URL: ${req.protocol}://${req.get('host')}${req.originalUrl}`);
+    
     ensureStrategy(req.hostname);
     passport.authenticate(`replitauth:${req.hostname}`, async (err: any, user: any) => {
       if (err || !user) {
-        console.error("Replit Auth callback error:", err);
+        console.error("[OAuth] Callback error:", err);
+        console.error("[OAuth] User object:", user);
+        console.error("[OAuth] Request headers:", JSON.stringify(req.headers, null, 2));
         return res.redirect("/auth?error=oauth_failed");
       }
 
       try {
         const claims = user.claims;
-        const { userId } = await findOrCreateUserFromOAuth(claims);
+        console.log(`[OAuth] Processing claims for: ${claims?.email || 'unknown'}`);
+        console.log(`[OAuth] Claims sub: ${claims?.sub}`);
+        
+        const { userId, isNewUser } = await findOrCreateUserFromOAuth(claims);
+        console.log(`[OAuth] User ${isNewUser ? 'created' : 'found'}: ${userId}`);
         
         const dbUser = await storage.getUser(userId);
         if (!dbUser) {
+          console.error(`[OAuth] User not found in DB after creation: ${userId}`);
           return res.redirect("/auth?error=user_not_found");
         }
+
+        console.log(`[OAuth] Login successful for: ${dbUser.email}`);
 
         if (dbUser.twoFactorEnabled) {
           const tempToken = jwt.sign(
