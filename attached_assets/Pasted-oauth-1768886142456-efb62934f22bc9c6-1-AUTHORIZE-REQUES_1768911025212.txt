@@ -1,0 +1,102 @@
+oauth_1768886142456_efb62934f22bc9c6
+
+1.
+AUTHORIZE_REQUEST
+INFO
+0ms
+GET
+/api/oauth/authorize
+→ redirect_uri: https://workdigitalbuilder.com/api/auth/credithub/callback
+→ client_id: client_de13d73ad28d63698ad0e13102895c2b
+→ scope: openid profile credits
+User: jking@workdigital.com
+IP: 34.29.37.167
+User Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.85 Mobile/15E148 Safari/604.1
+Response Details:
+{
+  "response_type": "code",
+  "has_state": true,
+  "has_code_challenge": true,
+  "code_challenge_method": "S256",
+  "rate_limit_remaining": 59
+}
+1/19/2026, 11:15:42 PM
+2.
+APP_RESOLVED
+INFO
+48ms
+GET
+/api/oauth/authorize
+→ redirect_uri: https://workdigitalbuilder.com/api/auth/credithub/callback
+→ client_id: client_de13d73ad28d63698ad0e13102895c2b
+→ scope: openid profile credits
+App: AI Web Builder
+User: jking@workdigital.com
+IP: 34.29.37.167
+User Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.85 Mobile/15E148 Safari/604.1
+Response Details:
+{
+  "appId": "34166349-2585-4f81-a694-1c4b40ab28b9",
+  "appName": "AI Web Builder"
+}
+1/19/2026, 11:15:42 PM
+3.
+REDIRECT_URI_VALIDATED
+INFO
+72ms
+GET
+/api/oauth/authorize
+→ redirect_uri: https://workdigitalbuilder.com/api/auth/credithub/callback
+→ client_id: client_de13d73ad28d63698ad0e13102895c2b
+→ scope: openid profile credits
+App: AI Web Builder
+User: jking@workdigital.com
+IP: 34.29.37.167
+User Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.85 Mobile/15E148 Safari/604.1
+1/19/2026, 11:15:42 PM
+4.
+PKCE_VALIDATED
+INFO
+102ms
+GET
+/api/oauth/authorize
+→ redirect_uri: https://workdigitalbuilder.com/api/auth/credithub/callback
+→ client_id: client_de13d73ad28d63698ad0e13102895c2b
+→ scope: openid profile credits
+App: AI Web Builder
+User: jking@workdigital.com
+IP: 34.29.37.167
+User Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.85 Mobile/15E148 Safari/604.1
+1/19/2026, 11:15:42 PM
+5.
+CODE_CREATED
+SUCCESS
+151ms
+GET
+/api/oauth/authorize
+→ redirect_uri: https://workdigitalbuilder.com/api/auth/credithub/callback
+→ client_id: client_de13d73ad28d63698ad0e13102895c2b
+→ scope: openid profile credits
+App: AI Web Builder
+User: jking@workdigital.com
+IP: 34.29.37.167
+User Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.85 Mobile/15E148 Safari/604.1
+Response Details:
+{
+  "codePrefix": "c7a7d13c"
+}
+1/19/2026, 11:15:42 PM
+6.
+AUTHORIZE_SUCCESS
+SUCCESS
+198ms
+GET
+/api/oauth/authorize
+→ redirect_uri: https://workdigitalbuilder.com/api/auth/credithub/callback
+→ client_id: client_de13d73ad28d63698ad0e13102895c2b
+→ scope: openid profile credits
+App: AI Web Builder
+User: jking@workdigital.com
+IP: 34.29.37.167
+User Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 26_2_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/144.0.7559.85 Mobile/15E148 Safari/604.1
+1/19/2026, 11:15:42 PM
