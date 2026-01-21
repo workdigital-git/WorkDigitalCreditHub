@@ -19,8 +19,9 @@ The application starts an Express backend and Vite frontend on port 5000.
 | File | Purpose |
 |------|---------|
 | `shared/schema.ts` | Database schema + Zod validation |
-| `server/routes.ts` | API endpoints |
+| `server/routes.ts` | API endpoints (V1 + V2) |
 | `server/storage.ts` | Database operations |
+| `server/services/tenancy.ts` | Multi-org tenancy service |
 | `client/src/pages/` | React page components |
 | `client/src/lib/auth.tsx` | Authentication context |
 

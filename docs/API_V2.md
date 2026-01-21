@@ -111,7 +111,7 @@ Authorization: Bearer <jwt_token>
 ```
 
 **Error Responses:**
-- `403 NOT_A_MEMBER` - User is not a member of this organization
+- `404 NOT_A_MEMBER` - User is not a member of this organization
 - `403 MEMBERSHIP_NOT_ACTIVE` - User's membership is not active
 
 ---
@@ -141,7 +141,7 @@ Content-Type: application/json
 **Error Responses:**
 - `403 INSUFFICIENT_PERMISSIONS` - Only OWNER/ADMIN can add users
 - `404 USER_NOT_FOUND` - Target user doesn't exist
-- `403 ALREADY_MEMBER` - User is already an active member
+- `409 ALREADY_MEMBER` - User is already an active member (conflict)
 
 ---
 
@@ -185,7 +185,7 @@ Authorization: Bearer <jwt_token>
 - `403 INSUFFICIENT_PERMISSIONS` - Only OWNER/ADMIN can remove users
 - `403 CANNOT_REMOVE_SELF` - Cannot remove yourself
 - `403 CANNOT_REMOVE_OWNER` - Only owners can remove other owners
-- `403 NOT_A_MEMBER` - Target user is not a member
+- `404 NOT_A_MEMBER` - Target user is not a member
 
 ---
 
@@ -381,3 +381,32 @@ await fetch(`/api/v2/orgs/${org_id}/users/by-email`, {
   body: JSON.stringify({ email: 'teammate@example.com', role: 'MEMBER' })
 });
 ```
+
+---
+
+## Error Code Reference
+
+All V2 API errors return a consistent JSON format:
+```json
+{
+  "error": "ERROR_CODE",
+  "message": "Human-readable description"
+}
+```
+
+### HTTP Status Code Mapping
+
+| Error Code | HTTP Status | Description |
+|------------|-------------|-------------|
+| `USER_NOT_FOUND` | 404 | Target user doesn't exist |
+| `ORG_NOT_FOUND` | 404 | Organization doesn't exist |
+| `WALLET_NOT_FOUND` | 404 | Wallet doesn't exist |
+| `NOT_A_MEMBER` | 404 | User is not a member of the organization |
+| `SLUG_COLLISION` | 409 | Slug already exists (retry with different name) |
+| `ALREADY_MEMBER` | 409 | User is already an active member |
+| `INSUFFICIENT_PERMISSIONS` | 403 | Role doesn't allow this action |
+| `CANNOT_REMOVE_SELF` | 403 | Cannot remove yourself from org |
+| `CANNOT_REMOVE_OWNER` | 403 | Non-owners cannot remove owners |
+| `CANNOT_CHANGE_OWNER_ROLE` | 403 | Owner role cannot be changed |
+| `MEMBERSHIP_NOT_ACTIVE` | 403 | Membership is suspended/inactive |
+| `INSUFFICIENT_CREDITS` | 402 | Not enough credits in wallet |
