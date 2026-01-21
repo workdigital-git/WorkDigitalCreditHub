@@ -1,0 +1,252 @@
+You are the Replit Agent working inside the Work Digital CreditHub repo.
+
+MISSION
+Mature CreditHub to support a SaaS-compatible multi-tenant model:
+- Many Users ↔ Many Organizations (Memberships)
+- Credits are owned/burned against an Organization Wallet
+- Users can create orgs and add users to orgs
+- MUST NOT BREAK any existing API or the current single-user flows.
+
+CORE COMPATIBILITY RULES (NON-NEGOTIABLE)
+1) Existing endpoints MUST keep working with ZERO client changes.
+2) Existing single-user credits MUST remain available and burnable as before.
+3) New multi-org functionality MUST be additive:
+   - Prefer new endpoints under /api/v2/*
+   - Or extend responses with optional fields but do not change required fields or semantics.
+4) For legacy clients, treat each user as having an implicit “Personal Organization” and “Personal Wallet”.
+5) All credit burns must remain idempotent and auditable.
+
+CURRENT STATE ASSUMPTIONS (VERIFY IN REPO)
+- There is a users table or users concept
+- There is a notion of a credit balance and a burn mechanism
+- There are existing endpoints used by other apps (Receipts, Accounting, etc.)
+- There is an auth middleware that yields a user_id (or equivalent)
+
+TASKS
+A) Discover & document existing API surface + current credit model
+B) Add multi-org schema and services (orgs, memberships, wallets)
+C) Build new v2 endpoints for org management
+D) Add a compatibility shim so old endpoints still behave exactly the same
+E) Add tests + migrations + regression guards
+
+DELIVERABLES
+1) PR-style implementation across DB, server, and (if present) admin UI
+2) docs/OrgTenancy.md: the new tenancy model + compatibility rules
+3) docs/API_V2.md: new endpoints and example requests
+4) scripts/verify-multi-org.sh: smoke test script (local) that verifies both legacy and v2 behaviors
+
+PHASE 0 — REPO INVENTORY (DO FIRST)
+1) List current server structure and routing (server/index.ts, routes, controllers, etc.)
+2) Enumerate existing credit endpoints and payloads (read code + docs)
+3) Identify where “credits belong” today (user balance? ledger? account id?)
+4) Identify auth context extraction (req.user? JWT claims?) and how to obtain user_id
+
+Write findings into docs/OrgTenancy.md under “Current State”.
+
+PHASE 1 — DATABASE SCHEMA (ADD ONLY, NO DESTRUCTIVE CHANGES)
+Create migrations for:
+
+TABLE organizations
+- id (uuid pk)
+- name (text, not null)
+- created_by_user_id (uuid, not null)
+- created_at (timestamp)
+- updated_at (timestamp)
+
+TABLE organization_memberships
+- id (uuid pk)
+- organization_id (uuid fk -> organizations.id)
+- user_id (uuid fk -> users.id)
+- role (text: OWNER|ADMIN|MEMBER)
+- status (text: ACTIVE|INVITED|SUSPENDED)
+- created_at, updated_at
+Unique constraint: (organization_id, user_id)
+
+TABLE wallets
+- id (uuid pk)
+- organization_id (uuid fk -> organizations.id)
+- type (text: CREDITS)
+- status (text: ACTIVE|SUSPENDED)
+- created_at, updated_at
+Unique constraint: (organization_id, type)
+
+OPTIONAL (preferred if ledger doesn’t exist already):
+TABLE credit_ledger
+- id (uuid pk)
+- wallet_id (uuid fk -> wallets.id)
+- direction (text: CREDIT|DEBIT)
+- amount (integer, not null)
+- product (text, not null)  // e.g. "CREDITHUB", "RECEIPTS"
+- feature (text, nullable)  // e.g. "OCR"
+- external_ref (text, not null) // idempotency key
+- performed_by_user_id (uuid, nullable)
+- metadata_json (jsonb, nullable)
+- created_at (timestamp)
+Unique constraint: (wallet_id, external_ref)
+
+PERSONAL ORG + WALLET BACKFILL
+Write a migration/script that:
+- For every existing user:
+  - Create an org: "<email> Personal" or "<user_id> Personal"
+  - Create OWNER membership
+  - Create wallet
+- Map legacy user credit balance into this wallet:
+  - If legacy model stores a balance number, seed a CREDIT ledger entry equal to that balance
+  - If legacy model is already ledger-based, just associate wallet_id for that user’s personal org (see Phase 2 shim)
+
+IMPORTANT: If there is already a credits table keyed by user_id, DO NOT REMOVE IT.
+We will keep it for legacy compatibility, but v2 will primarily operate on wallets.
+
+PHASE 2 — SERVICE LAYER (TENANCY + COMPATIBILITY SHIM)
+Implement a tenancy service module, e.g. server/services/tenancy.ts:
+
+Functions:
+- getOrCreatePersonalOrg(userId): returns org + wallet
+- listUserOrgs(userId): returns orgs + membership role/status + wallet_id
+- assertUserInOrg(userId, orgId): throws 403 if not ACTIVE
+- createOrg(userId, name): creates org + OWNER membership + wallet
+- inviteUserToOrg(inviterUserId, orgId, emailOrUserId, role): creates INVITED membership (if user exists) or stores pending invite (see below)
+- acceptInvite(userId, orgId): sets membership to ACTIVE if INVITED
+- addUserToOrg(adminUserId, orgId, targetUserId, role): sets ACTIVE membership directly (admin/owner only)
+- removeUserFromOrg(adminUserId, orgId, targetUserId)
+
+Invites:
+- For v1, keep it simple: only allow adding existing users by user_id or email lookup.
+- If email doesn’t exist, return a clear error (“user not found”) for now.
+- Later we can add pending invites table; scaffold interface but don’t overbuild.
+
+COMPATIBILITY SHIM FOR LEGACY CREDIT OPERATIONS
+Create a wrapper around existing credit burn/add functions so that:
+- If endpoint is legacy (/api/* existing):
+  - Resolve wallet via getOrCreatePersonalOrg(userId)
+  - Perform the credit operation against wallet (and also keep legacy storage in sync if needed)
+- If endpoint is v2 and includes orgId/walletId:
+  - Validate membership, then operate on that wallet
+
+Key: legacy semantics must be identical (same approvals/declines, same balance changes).
+If legacy response returns “balance”, keep returning “balance” as before.
+
+PHASE 3 — API ENDPOINTS (ADD V2; KEEP V1 UNCHANGED)
+Add new endpoints under /api/v2:
+
+Auth required for all.
+
+GET /api/v2/me/orgs
+Response:
+{
+  "orgs": [
+    {
+      "org_id": "...",
+      "name": "...",
+      "role": "OWNER",
+      "status": "ACTIVE",
+      "wallet_id": "..."
+    }
+  ],
+  "default_org_id": "... (optional)"
+}
+
+POST /api/v2/orgs
+Body: { "name": "Acme Inc" }
+Response: { "org_id": "...", "wallet_id": "...", "name": "...", "role": "OWNER" }
+
+POST /api/v2/orgs/:orgId/users
+Body: { "target_user_id": "...", "role": "ADMIN" }
+Response: { "ok": true }
+
+(OPTIONAL but useful)
+POST /api/v2/orgs/:orgId/users/by-email
+Body: { "email": "user@acme.com", "role": "MEMBER" }
+Response: { "ok": true } or { "error": "USER_NOT_FOUND" }
+
+DELETE /api/v2/orgs/:orgId/users/:userId
+Response: { "ok": true }
+
+GET /api/v2/orgs/:orgId
+Response: { "org_id": "...", "name": "...", "members": [...] } (only owner/admin)
+
+CREDITS V2
+POST /api/v2/credits/burn
+Body:
+{
+  "org_id": "...",            // required unless wallet_id provided
+  "wallet_id": "...",         // optional
+  "amount": 3,
+  "product": "RECEIPTS",
+  "feature": "OCR",
+  "external_ref": "receipts:receipt_123:ocr:v1",
+  "metadata": { "receipt_id": "receipt_123", "job_id": "job_77" }
+}
+Response:
+{
+  "approved": true,
+  "balance": 1234,
+  "ledger_id": "..."
+}
+
+GET /api/v2/wallets/:walletId/ledger?limit=50
+Response: { "items": [...] }
+
+V1 ENDPOINTS
+- Do not alter route names, response shapes, or required body fields.
+- If you must add fields, make them optional and do not change meaning.
+
+PHASE 4 — AUTHZ + SECURITY
+- Only OWNER/ADMIN can add/remove users
+- MEMBER can view org basics + burn credits if they are ACTIVE
+- All org-scoped endpoints must verify membership status ACTIVE
+- Add rate limiting to invite/add-user endpoints to prevent abuse
+- Redact secrets in logs, never log full auth tokens
+
+PHASE 5 — TESTS (MUST INCLUDE REGRESSION)
+Add automated tests (or lightweight integration tests if repo lacks a framework):
+
+1) Legacy regression:
+- Create user U1
+- Hit legacy “get balance” endpoint (whatever exists)
+- Burn credits via legacy endpoint
+- Assert identical response shape and expected balance math
+
+2) Multi-org happy path:
+- U1 creates org O1
+- U1 adds U2 as MEMBER
+- U2 lists orgs and sees O1
+- U2 burns credits against O1 via v2 burn endpoint
+- Ensure ledger created + balance updated
+
+3) Permission tests:
+- MEMBER cannot add/remove users
+- INVITED/SUSPENDED cannot burn
+
+4) Idempotency:
+- Call v2 burn twice with same external_ref; second returns same ledger_id or returns idempotent “already processed” without double debit.
+
+PHASE 6 — VERIFY SCRIPT
+Create scripts/verify-multi-org.sh that:
+- creates users (or uses fixtures)
+- runs curls against local server for legacy and v2
+- prints PASS/FAIL clearly
+
+PHASE 7 — ADMIN UI (ONLY IF CREDIT HUB HAS UI)
+If there is an Admin panel already:
+- Add an “Organizations” section:
+  - list orgs
+  - view members
+  - view wallet balance + ledger
+Keep it minimal; backend correctness first.
+
+IMPLEMENTATION NOTES
+- Prefer additive migrations.
+- Keep code clean and modular.
+- Any time you touch legacy code paths, guard with tests.
+- Use transactions for org+wallet creation and for burns.
+- Use UUIDs consistently.
+
+OUTPUT REQUIREMENTS
+At the end, produce:
+1) A concise change summary grouped by DB / API / Services / Tests / Scripts
+2) A list of files changed/added
+3) How to run migrations + tests + verify script locally
+4) A “Compatibility Statement” explicitly listing which v1 endpoints were left unchanged and how they map to the Personal Org.
+
+Now proceed. Start with Phase 0 inventory, then implement Phases 1–6. If you discover unknowns in the current credit model, adapt the shim but preserve the non-negotiable compatibility rules.
