@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, timestamp, bigint, pgEnum, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, timestamp, bigint, pgEnum, jsonb, index, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -878,6 +878,134 @@ export const insertCheckoutSessionSchema = createInsertSchema(checkoutSessions).
   createdAt: true,
 });
 
+// ============================================================
+// MULTI-TENANT ORGANIZATION SUPPORT
+// ============================================================
+
+export const orgMemberRoleEnum = pgEnum("org_member_role", ["OWNER", "ADMIN", "MEMBER"]);
+export const orgMemberStatusEnum = pgEnum("org_member_status", ["ACTIVE", "INVITED", "SUSPENDED"]);
+export const orgWalletTypeEnum = pgEnum("org_wallet_type", ["CREDITS"]);
+export const orgWalletStatusEnum = pgEnum("org_wallet_status", ["ACTIVE", "SUSPENDED"]);
+export const creditLedgerDirectionEnum = pgEnum("credit_ledger_direction", ["CREDIT", "DEBIT"]);
+
+export const organizations = pgTable("organizations", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  isPersonal: boolean("is_personal").default(false).notNull(),
+  createdByUserId: varchar("created_by_user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const organizationMemberships = pgTable("organization_memberships", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id", { length: 36 }).notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: varchar("user_id", { length: 36 }).notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: orgMemberRoleEnum("role").notNull().default("MEMBER"),
+  status: orgMemberStatusEnum("status").notNull().default("ACTIVE"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_org_memberships_org_id").on(table.organizationId),
+  index("idx_org_memberships_user_id").on(table.userId),
+]);
+
+export const orgWallets = pgTable("org_wallets", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id", { length: 36 }).notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  type: orgWalletTypeEnum("type").notNull().default("CREDITS"),
+  balanceCents: bigint("balance_cents", { mode: "number" }).default(0).notNull(),
+  status: orgWalletStatusEnum("status").notNull().default("ACTIVE"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_org_wallets_org_id").on(table.organizationId),
+]);
+
+export const orgCreditLedger = pgTable("org_credit_ledger", {
+  id: varchar("id", { length: 36 }).primaryKey().default(sql`gen_random_uuid()`),
+  walletId: varchar("wallet_id", { length: 36 }).notNull().references(() => orgWallets.id, { onDelete: "cascade" }),
+  direction: creditLedgerDirectionEnum("direction").notNull(),
+  amount: bigint("amount", { mode: "number" }).notNull(),
+  product: text("product").notNull(),
+  feature: text("feature"),
+  externalRef: text("external_ref").notNull(),
+  performedByUserId: varchar("performed_by_user_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+  metadataJson: jsonb("metadata_json"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_org_credit_ledger_wallet_id").on(table.walletId),
+  index("idx_org_credit_ledger_external_ref").on(table.externalRef),
+  unique("uq_org_credit_ledger_wallet_external_ref").on(table.walletId, table.externalRef),
+]);
+
+export const insertOrganizationSchema = createInsertSchema(organizations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertOrganizationMembershipSchema = createInsertSchema(organizationMemberships).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertOrgWalletSchema = createInsertSchema(orgWallets).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertOrgCreditLedgerSchema = createInsertSchema(orgCreditLedger).omit({
+  id: true,
+  createdAt: true,
+});
+
+// Organization Relations
+export const organizationsRelations = relations(organizations, ({ one, many }) => ({
+  createdByUser: one(users, {
+    fields: [organizations.createdByUserId],
+    references: [users.id],
+  }),
+  memberships: many(organizationMemberships),
+  wallet: one(orgWallets, {
+    fields: [organizations.id],
+    references: [orgWallets.organizationId],
+  }),
+}));
+
+export const organizationMembershipsRelations = relations(organizationMemberships, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [organizationMemberships.organizationId],
+    references: [organizations.id],
+  }),
+  user: one(users, {
+    fields: [organizationMemberships.userId],
+    references: [users.id],
+  }),
+}));
+
+export const orgWalletsRelations = relations(orgWallets, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [orgWallets.organizationId],
+    references: [organizations.id],
+  }),
+  ledgerEntries: many(orgCreditLedger),
+}));
+
+export const orgCreditLedgerRelations = relations(orgCreditLedger, ({ one }) => ({
+  wallet: one(orgWallets, {
+    fields: [orgCreditLedger.walletId],
+    references: [orgWallets.id],
+  }),
+  performedByUser: one(users, {
+    fields: [orgCreditLedger.performedByUserId],
+    references: [users.id],
+  }),
+}));
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type LoginInput = z.infer<typeof loginSchema>;
@@ -938,3 +1066,13 @@ export type AutopayAttempt = typeof autopayAttempts.$inferSelect;
 export type InsertAutopayAttempt = z.infer<typeof insertAutopayAttemptSchema>;
 export type CheckoutSession = typeof checkoutSessions.$inferSelect;
 export type InsertCheckoutSession = z.infer<typeof insertCheckoutSessionSchema>;
+
+// Organization Types
+export type Organization = typeof organizations.$inferSelect;
+export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
+export type OrganizationMembership = typeof organizationMemberships.$inferSelect;
+export type InsertOrganizationMembership = z.infer<typeof insertOrganizationMembershipSchema>;
+export type OrgWallet = typeof orgWallets.$inferSelect;
+export type InsertOrgWallet = z.infer<typeof insertOrgWalletSchema>;
+export type OrgCreditLedger = typeof orgCreditLedger.$inferSelect;
+export type InsertOrgCreditLedger = z.infer<typeof insertOrgCreditLedgerSchema>;

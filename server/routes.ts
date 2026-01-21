@@ -15,6 +15,28 @@ import {
   insertAppSchema,
 } from "@shared/schema";
 import { sendOtpCode, verifyOtpCode, isPlivo_configured, normalizePhoneNumber, validatePhoneNumber } from "./sms-service";
+import { tenancyService, TenancyError } from "./services/tenancy";
+
+function getTenancyErrorStatus(code: string): number {
+  switch (code) {
+    case "USER_NOT_FOUND":
+    case "ORG_NOT_FOUND":
+    case "WALLET_NOT_FOUND":
+    case "NOT_A_MEMBER":
+      return 404;
+    case "SLUG_COLLISION":
+    case "ALREADY_MEMBER":
+      return 409;
+    case "INSUFFICIENT_PERMISSIONS":
+    case "CANNOT_REMOVE_SELF":
+    case "CANNOT_REMOVE_OWNER":
+    case "CANNOT_CHANGE_OWNER_ROLE":
+    case "MEMBERSHIP_NOT_ACTIVE":
+      return 403;
+    default:
+      return 400;
+  }
+}
 
 if (!process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET environment variable is required for JWT authentication");
@@ -4401,6 +4423,247 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (error) {
       console.error("V2 check-authorization error:", error);
       res.status(500).json({ error: "server_error", message: "Failed to check authorization" });
+    }
+  });
+
+  // ============================================================
+  // V2 ORGANIZATION ENDPOINTS
+  // ============================================================
+
+  app.get("/api/v2/me/orgs", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const orgs = await tenancyService.listUserOrgs(userId);
+      
+      const personalOrg = orgs.find(o => o.isPersonal);
+      
+      res.json({
+        orgs: orgs.map(o => ({
+          org_id: o.orgId,
+          name: o.name,
+          slug: o.slug,
+          role: o.role,
+          status: o.status,
+          wallet_id: o.walletId,
+          balance_cents: o.balanceCents,
+          is_personal: o.isPersonal,
+        })),
+        default_org_id: personalOrg?.orgId || null,
+      });
+    } catch (error) {
+      console.error("V2 list orgs error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to list organizations" });
+    }
+  });
+
+  app.post("/api/v2/orgs", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { name } = req.body;
+
+      if (!name || typeof name !== "string" || name.trim().length < 2) {
+        return res.status(400).json({ error: "invalid_name", message: "Organization name must be at least 2 characters" });
+      }
+
+      const result = await tenancyService.createOrg(userId, name.trim());
+
+      res.status(201).json({
+        org_id: result.org.id,
+        wallet_id: result.wallet.id,
+        name: result.org.name,
+        slug: result.org.slug,
+        role: "OWNER",
+      });
+    } catch (error: any) {
+      console.error("V2 create org error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to create organization" });
+    }
+  });
+
+  app.get("/api/v2/orgs/:orgId", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { orgId } = req.params;
+
+      const details = await tenancyService.getOrgDetails(userId, orgId);
+
+      res.json({
+        org_id: details.org.id,
+        name: details.org.name,
+        slug: details.org.slug,
+        is_personal: details.org.isPersonal,
+        wallet_id: details.wallet.id,
+        balance_cents: details.wallet.balanceCents,
+        members: details.members.map(m => ({
+          user_id: m.userId,
+          email: m.email,
+          full_name: m.fullName,
+          role: m.role,
+          status: m.status,
+        })),
+      });
+    } catch (error: any) {
+      if (error.name === "TenancyError") {
+        return res.status(getTenancyErrorStatus(error.code)).json({ error: error.code, message: error.message });
+      }
+      console.error("V2 get org error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to get organization" });
+    }
+  });
+
+  app.post("/api/v2/orgs/:orgId/users", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { orgId } = req.params;
+      const { target_user_id, role } = req.body;
+
+      if (!target_user_id) {
+        return res.status(400).json({ error: "missing_target_user_id", message: "target_user_id is required" });
+      }
+
+      if (role && !["ADMIN", "MEMBER"].includes(role)) {
+        return res.status(400).json({ error: "invalid_role", message: "role must be ADMIN or MEMBER" });
+      }
+
+      await tenancyService.addUserToOrg(userId, orgId, target_user_id, role || "MEMBER");
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      if (error.name === "TenancyError") {
+        return res.status(getTenancyErrorStatus(error.code)).json({ error: error.code, message: error.message });
+      }
+      console.error("V2 add user to org error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to add user to organization" });
+    }
+  });
+
+  app.post("/api/v2/orgs/:orgId/users/by-email", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { orgId } = req.params;
+      const { email, role } = req.body;
+
+      if (!email) {
+        return res.status(400).json({ error: "missing_email", message: "email is required" });
+      }
+
+      if (role && !["ADMIN", "MEMBER"].includes(role)) {
+        return res.status(400).json({ error: "invalid_role", message: "role must be ADMIN or MEMBER" });
+      }
+
+      await tenancyService.addUserToOrgByEmail(userId, orgId, email, role || "MEMBER");
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      if (error.name === "TenancyError") {
+        const status = getTenancyErrorStatus(error.code);
+        return res.status(status).json({ error: error.code, message: error.message });
+      }
+      console.error("V2 add user by email error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to add user to organization" });
+    }
+  });
+
+  app.delete("/api/v2/orgs/:orgId/users/:targetUserId", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { orgId, targetUserId } = req.params;
+
+      await tenancyService.removeUserFromOrg(userId, orgId, targetUserId);
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      if (error.name === "TenancyError") {
+        return res.status(getTenancyErrorStatus(error.code)).json({ error: error.code, message: error.message });
+      }
+      console.error("V2 remove user from org error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to remove user from organization" });
+    }
+  });
+
+  app.post("/api/v2/credits/burn", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { org_id, wallet_id, amount, product, feature, external_ref, metadata } = req.body;
+
+      if (!amount || typeof amount !== "number" || amount <= 0) {
+        return res.status(400).json({ error: "invalid_amount", message: "amount must be a positive number" });
+      }
+
+      if (!product || typeof product !== "string") {
+        return res.status(400).json({ error: "missing_product", message: "product is required" });
+      }
+
+      if (!external_ref || typeof external_ref !== "string") {
+        return res.status(400).json({ error: "missing_external_ref", message: "external_ref is required for idempotency" });
+      }
+
+      const result = await tenancyService.burnCredits(
+        userId,
+        org_id || null,
+        amount,
+        product,
+        external_ref,
+        feature,
+        metadata
+      );
+
+      if (!result.approved) {
+        return res.status(402).json({
+          approved: false,
+          balance: result.balance,
+          error: result.error,
+        });
+      }
+
+      res.json({
+        approved: true,
+        balance: result.balance,
+        ledger_id: result.ledgerId,
+      });
+    } catch (error: any) {
+      if (error.name === "TenancyError") {
+        return res.status(getTenancyErrorStatus(error.code)).json({ error: error.code, message: error.message });
+      }
+      console.error("V2 credit burn error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to burn credits" });
+    }
+  });
+
+  app.get("/api/v2/wallets/:walletId/ledger", authMiddleware, async (req: AuthRequest, res) => {
+    try {
+      const userId = req.user!.id;
+      const { walletId } = req.params;
+      const limit = parseInt(req.query.limit as string) || 50;
+
+      const wallet = await storage.getOrgWallet(walletId);
+      if (!wallet) {
+        return res.status(404).json({ error: "wallet_not_found", message: "Wallet not found" });
+      }
+
+      await tenancyService.assertUserInOrg(userId, wallet.organizationId);
+
+      const entries = await storage.getOrgCreditLedger(walletId, limit);
+
+      res.json({
+        items: entries.map(e => ({
+          id: e.id,
+          direction: e.direction,
+          amount: e.amount,
+          product: e.product,
+          feature: e.feature,
+          external_ref: e.externalRef,
+          performed_by_user_id: e.performedByUserId,
+          metadata: e.metadataJson,
+          created_at: e.createdAt,
+        })),
+      });
+    } catch (error: any) {
+      if (error.name === "TenancyError") {
+        return res.status(getTenancyErrorStatus(error.code)).json({ error: error.code, message: error.message });
+      }
+      console.error("V2 get ledger error:", error);
+      res.status(500).json({ error: "server_error", message: "Failed to get ledger" });
     }
   });
 

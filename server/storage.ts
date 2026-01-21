@@ -91,6 +91,18 @@ import {
   type InsertAutopayAttempt,
   type CheckoutSession,
   type InsertCheckoutSession,
+  organizations,
+  organizationMemberships,
+  orgWallets,
+  orgCreditLedger,
+  type Organization,
+  type InsertOrganization,
+  type OrganizationMembership,
+  type InsertOrganizationMembership,
+  type OrgWallet,
+  type InsertOrgWallet,
+  type OrgCreditLedger,
+  type InsertOrgCreditLedger,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, or, ilike, gte, lte, count, isNull, isNotNull, asc } from "drizzle-orm";
@@ -330,6 +342,33 @@ export interface IStorage {
   createCheckoutSession(session: InsertCheckoutSession): Promise<CheckoutSession>;
   getCheckoutSessionByStripeId(stripeSessionId: string): Promise<CheckoutSession | undefined>;
   updateCheckoutSession(id: string, data: Partial<CheckoutSession>): Promise<CheckoutSession | undefined>;
+
+  // Organizations
+  getOrganization(id: string): Promise<Organization | undefined>;
+  getOrganizationBySlug(slug: string): Promise<Organization | undefined>;
+  getPersonalOrganization(userId: string): Promise<Organization | undefined>;
+  createOrganization(org: InsertOrganization): Promise<Organization>;
+  updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined>;
+  deleteOrganization(id: string): Promise<boolean>;
+
+  // Organization Memberships
+  getMembership(orgId: string, userId: string): Promise<OrganizationMembership | undefined>;
+  getMembershipsByOrgId(orgId: string): Promise<(OrganizationMembership & { user: User })[]>;
+  getMembershipsByUserId(userId: string): Promise<(OrganizationMembership & { organization: Organization })[]>;
+  createMembership(membership: InsertOrganizationMembership): Promise<OrganizationMembership>;
+  updateMembership(id: string, data: Partial<OrganizationMembership>): Promise<OrganizationMembership | undefined>;
+  deleteMembership(id: string): Promise<boolean>;
+
+  // Organization Wallets
+  getOrgWallet(id: string): Promise<OrgWallet | undefined>;
+  getOrgWalletByOrgId(orgId: string): Promise<OrgWallet | undefined>;
+  createOrgWallet(wallet: InsertOrgWallet): Promise<OrgWallet>;
+  updateOrgWalletBalance(id: string, amountCents: number): Promise<OrgWallet | undefined>;
+
+  // Organization Credit Ledger
+  getOrgCreditLedger(walletId: string, limit?: number): Promise<OrgCreditLedger[]>;
+  getOrgCreditLedgerByExternalRef(walletId: string, externalRef: string): Promise<OrgCreditLedger | undefined>;
+  createOrgCreditLedgerEntry(entry: InsertOrgCreditLedger): Promise<OrgCreditLedger>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1813,6 +1852,168 @@ export class DatabaseStorage implements IStorage {
       .where(eq(checkoutSessions.id, id))
       .returning();
     return updated || undefined;
+  }
+
+  // ============================================================
+  // ORGANIZATION METHODS
+  // ============================================================
+
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, id));
+    return org || undefined;
+  }
+
+  async getOrganizationBySlug(slug: string): Promise<Organization | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.slug, slug));
+    return org || undefined;
+  }
+
+  async getPersonalOrganization(userId: string): Promise<Organization | undefined> {
+    const [org] = await db
+      .select()
+      .from(organizations)
+      .where(and(eq(organizations.createdByUserId, userId), eq(organizations.isPersonal, true)));
+    return org || undefined;
+  }
+
+  async createOrganization(org: InsertOrganization): Promise<Organization> {
+    const [created] = await db.insert(organizations).values(org).returning();
+    return created;
+  }
+
+  async updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined> {
+    const [updated] = await db
+      .update(organizations)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(organizations.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteOrganization(id: string): Promise<boolean> {
+    const result = await db.delete(organizations).where(eq(organizations.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Organization Memberships
+  async getMembership(orgId: string, userId: string): Promise<OrganizationMembership | undefined> {
+    const [membership] = await db
+      .select()
+      .from(organizationMemberships)
+      .where(and(
+        eq(organizationMemberships.organizationId, orgId),
+        eq(organizationMemberships.userId, userId)
+      ));
+    return membership || undefined;
+  }
+
+  async getMembershipsByOrgId(orgId: string): Promise<(OrganizationMembership & { user: User })[]> {
+    const result = await db
+      .select({
+        id: organizationMemberships.id,
+        organizationId: organizationMemberships.organizationId,
+        userId: organizationMemberships.userId,
+        role: organizationMemberships.role,
+        status: organizationMemberships.status,
+        createdAt: organizationMemberships.createdAt,
+        updatedAt: organizationMemberships.updatedAt,
+        user: users,
+      })
+      .from(organizationMemberships)
+      .leftJoin(users, eq(organizationMemberships.userId, users.id))
+      .where(eq(organizationMemberships.organizationId, orgId));
+    return result.map(r => ({ ...r, user: r.user! }));
+  }
+
+  async getMembershipsByUserId(userId: string): Promise<(OrganizationMembership & { organization: Organization })[]> {
+    const result = await db
+      .select({
+        id: organizationMemberships.id,
+        organizationId: organizationMemberships.organizationId,
+        userId: organizationMemberships.userId,
+        role: organizationMemberships.role,
+        status: organizationMemberships.status,
+        createdAt: organizationMemberships.createdAt,
+        updatedAt: organizationMemberships.updatedAt,
+        organization: organizations,
+      })
+      .from(organizationMemberships)
+      .leftJoin(organizations, eq(organizationMemberships.organizationId, organizations.id))
+      .where(eq(organizationMemberships.userId, userId));
+    return result.map(r => ({ ...r, organization: r.organization! }));
+  }
+
+  async createMembership(membership: InsertOrganizationMembership): Promise<OrganizationMembership> {
+    const [created] = await db.insert(organizationMemberships).values(membership).returning();
+    return created;
+  }
+
+  async updateMembership(id: string, data: Partial<OrganizationMembership>): Promise<OrganizationMembership | undefined> {
+    const [updated] = await db
+      .update(organizationMemberships)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(organizationMemberships.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteMembership(id: string): Promise<boolean> {
+    const result = await db.delete(organizationMemberships).where(eq(organizationMemberships.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Organization Wallets
+  async getOrgWallet(id: string): Promise<OrgWallet | undefined> {
+    const [wallet] = await db.select().from(orgWallets).where(eq(orgWallets.id, id));
+    return wallet || undefined;
+  }
+
+  async getOrgWalletByOrgId(orgId: string): Promise<OrgWallet | undefined> {
+    const [wallet] = await db.select().from(orgWallets).where(eq(orgWallets.organizationId, orgId));
+    return wallet || undefined;
+  }
+
+  async createOrgWallet(wallet: InsertOrgWallet): Promise<OrgWallet> {
+    const [created] = await db.insert(orgWallets).values(wallet).returning();
+    return created;
+  }
+
+  async updateOrgWalletBalance(id: string, amountCents: number): Promise<OrgWallet | undefined> {
+    const [updated] = await db
+      .update(orgWallets)
+      .set({ 
+        balanceCents: sql`${orgWallets.balanceCents} + ${amountCents}`,
+        updatedAt: new Date() 
+      })
+      .where(eq(orgWallets.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  // Organization Credit Ledger
+  async getOrgCreditLedger(walletId: string, limit?: number): Promise<OrgCreditLedger[]> {
+    return db
+      .select()
+      .from(orgCreditLedger)
+      .where(eq(orgCreditLedger.walletId, walletId))
+      .orderBy(desc(orgCreditLedger.createdAt))
+      .limit(limit || 50);
+  }
+
+  async getOrgCreditLedgerByExternalRef(walletId: string, externalRef: string): Promise<OrgCreditLedger | undefined> {
+    const [entry] = await db
+      .select()
+      .from(orgCreditLedger)
+      .where(and(
+        eq(orgCreditLedger.walletId, walletId),
+        eq(orgCreditLedger.externalRef, externalRef)
+      ));
+    return entry || undefined;
+  }
+
+  async createOrgCreditLedgerEntry(entry: InsertOrgCreditLedger): Promise<OrgCreditLedger> {
+    const [created] = await db.insert(orgCreditLedger).values(entry).returning();
+    return created;
   }
 }
 
